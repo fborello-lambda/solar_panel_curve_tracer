@@ -1,0 +1,13 @@
+{
+  "C_Cpp.intelliSenseEngine": "default",
+  "idf.flashType": "UART",
+  "idf.port": "/dev/ttyACM0",
+  "files.associations": {
+    "pwm_controller.h": "c",
+    "init.h": "c",
+    "db.h": "c",
+    "server.h": "c",
+    "driver_ina219.h": "c",
+    "json_builder.h": "c"
+  },
+}
