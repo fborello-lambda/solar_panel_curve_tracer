@@ -1,5 +1,7 @@
 #include "init.h"
 
+#define DEFAULT_SSID "ESP32_PLOT"
+
 static const char *TAG = "init";
 
 void wifi_init_softap(void)
@@ -12,7 +14,7 @@ void wifi_init_softap(void)
 
     wifi_config_t ap_config = {
         .ap = {
-            .ssid = "ESP32_PLOT",
+            .ssid = DEFAULT_SSID,
             .ssid_len = 0,
             .channel = 1,
             .password = "",

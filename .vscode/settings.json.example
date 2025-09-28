@@ -10,4 +10,10 @@
     "driver_ina219.h": "c",
     "json_builder.h": "c"
   },
+  "idf.openOcdConfigs": [
+    "board/esp32c3-bridge.cfg"
+  ],
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32c3"
+  }
 }

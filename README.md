@@ -4,6 +4,23 @@
 > The project was built on top of the template project provided by ESP-IDF. The example is used by command `idf.py create-project`
 that copies the project to user specified path and set it's name. For more information follow the [docs page](https://docs.espressif.com/projects/esp-idf/en/latest/api-guides/build-system.html#start-a-new-project)
 
+## How
+
+The project was developed with the VSCode IDE using the ESP-IDF extension. The project can be built and flashed to the ESP32-C3 using the ESP-IDF tools. The web server can be accessed by connecting to the ESP32-C3's Wi-Fi network and navigating to the IP address of the ESP32-C3 in a web browser.
+
+A good starting point is:
+
+Copy the settings file for VSCode to enable ESP-IDF extension features:
+
+```sh
+cp .vscode/settings.json.example .vscode/settings.json
+```
+
+Then choose the `esp32c3` target by clicking on the target in the bottom bar of VSCode, or by pressing Ctrl+Shift+P and typing `ESP-IDF: Set Espressif device target`.
+
+By doing this, the ESP-IDF extension will use the correct toolchain and settings for the ESP32-C3.
+
+To connect to the ESP32-C3's Wi-Fi network, the default SSID is `"ESP32_PLOT"` with no password. Then navigate to `http://192.168.4.1` in a web browser and the web interface should load. The `/data` endpoint is used to fetch the data for the chart, it returns a JSON object with the voltage and current data as a list of x,y points.
 
 ## What
 
