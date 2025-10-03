@@ -28,28 +28,23 @@ The Circuit is based on an ESP32-C3 microcontroller, INA219 current sensor, and 
 
 A prototype PCB was mounted on a perfboard, and the firmware was developed using ESP-IDF. The web interface is built using HTML, CSS, and JavaScript, and uses the Chart.js library for data visualization. For more information about the circuit design and implementation, please refer to the [notebook](notebook/README.md).
 
-Prototype PCB:
+### Prototype PCB
 
 <div align="center">
-
-![Prototype PCB](imgs/prototype.jpeg)
-
+    <img src="imgs/prototype.jpeg" alt="Prototype PCB" style="max-width:600px;margin:0 6px;">
 </div>
 
-Measurement setup:
+### Measurement setup
 
 <div align="center">
-
-![Measurement setup](imgs/measurement_setup.jpeg)
-
+    <img src="imgs/measurement_setup.jpeg" alt="Measurement setup" style="max-width:600px;margin:0 6px;">
 </div>
 
-Web interface:
+### Web interface
 
 <div align="center">
-
-![Web interface](imgs/web_interface.jpeg)
-
+    <img src="imgs/web_interface.jpeg" alt="Web interface" width="48%" style="max-width:400px;margin:0 6px;">
+    <img src="imgs/web_interface2.jpeg" alt="Web interface 2" width="48%" style="max-width:400px;margin:0 6px;">
 </div>
 
 The solar panel used is a Luxen 10W 12V panel. LN-10P
