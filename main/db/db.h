@@ -2,6 +2,9 @@
  * In memory database for samples. It's a way to keep track of the state
  * of the system and share it across tasks.
  *
+ * It also contains standalone variables to keep track of the state of the system.
+ * These variables are accessed via getter/setter functions.
+ *
  * Uses a mutex to protect access to the data.
  * Maybe not ideal for high-throughput, but sufficient for low-rate sampling.
  */
@@ -17,6 +20,10 @@ extern "C"
 {
 #endif
 
+// Taken from the notebook analysis
+// It depends on the resistor, the INA219 calibration, the power supply, etc.
+// Also, the shunt resistor will determine the max current that can be measured due to power dissipation.
+#define MAX_CURRENT_MA 3922.0f
 #define DB_MAX_SAMPLES 20
 
     /**
@@ -54,6 +61,24 @@ extern "C"
      * @return true on success, false on failure (e.g. invalid args or could not obtain mutex)
      */
     bool db_snapshot(float *x_out, float *y_out, size_t *count, size_t cap);
+
+    /**
+     * @brief Get the current current setpoint in mA.
+     *
+     * It's the range of current wanted to get from the Solar Panel.
+     *
+     * @return The current setpoint in mA.
+     */
+    float db_get_current_setpoint_mA(void);
+
+    /**
+     * @brief Set the current current setpoint in mA.
+     *
+     * It's the range of current wanted to get from the Solar Panel.
+     *
+     * @param value The new current setpoint in mA. Clamped to [0, MAX_CURRENT_MA].
+     */
+    void db_set_current_setpoint_mA(float value);
 
 #ifdef __cplusplus
 }

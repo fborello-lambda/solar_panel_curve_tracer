@@ -58,12 +58,28 @@ extern "C"
     int pwm_controller_set_duty(uint32_t duty_percent);
 
     /**
+     * @brief Set the duty cycle in resolution steps (0..max based on duty_resolution).
+     *
+     * @param duty_in_res_steps Duty cycle in resolution steps.
+     * @return 0 on success, negative on error.
+     */
+    int pwm_controller_set_duty_in_res_steps(uint32_t duty_in_res_steps);
+
+    /**
      * @brief Get the current duty cycle percentage for the PWM controller.
      *
      * @param duty_percent Pointer to uint32_t where the duty cycle percentage will be stored.
      * @return 0 on success, negative on error.
      */
     int pwm_controller_get_duty(uint32_t *duty_percent);
+
+    /**
+     * @brief Get the current PWM controller resolution.
+     *
+     * @param res Pointer to uint32_t where the resolution will be stored.
+     * @return 0 on success, negative on error.
+     */
+    int pwm_controller_get_resolution(uint32_t *res);
 
 #ifdef __cplusplus
 }

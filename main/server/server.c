@@ -1,4 +1,5 @@
 #include "server.h"
+#include <math.h>
 
 static const char *TAG = "server";
 
@@ -79,6 +80,110 @@ static esp_err_t data_get_handler(httpd_req_t *req)
     return httpd_resp_send(req, buf, len);
 }
 
+static esp_err_t set_current_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+
+    // Read request body
+    size_t to_read = req->content_len;
+    if (to_read == 0 || to_read > 256)
+    {
+        httpd_resp_set_status(req, "400 Bad Request");
+        return httpd_resp_send(req, "Invalid body", HTTPD_RESP_USE_STRLEN);
+    }
+
+    char buf[257];
+    size_t received = 0;
+    while (received < to_read)
+    {
+        int r = httpd_req_recv(req, buf + received, to_read - received);
+        if (r <= 0)
+        {
+            if (r == HTTPD_SOCK_ERR_TIMEOUT)
+                continue;
+            httpd_resp_set_status(req, "400 Bad Request");
+            return httpd_resp_send(req, "Failed to read body", HTTPD_RESP_USE_STRLEN);
+        }
+        received += r;
+    }
+    buf[received] = '\0';
+
+    // Determine content-type
+    char ctype[32] = {0};
+    size_t ctlen = httpd_req_get_hdr_value_len(req, "Content-Type");
+    if (ctlen > 0 && ctlen < sizeof(ctype))
+        httpd_req_get_hdr_value_str(req, "Content-Type", ctype, sizeof(ctype));
+
+    // Parse number (milliamps)
+    double value_mA = 0.0;
+    bool ok = false;
+
+    if ((ctype[0] && strstr(ctype, "application/json")) || (buf[0] == '{'))
+    {
+        // Very small JSON parsing without cJSON: look for "current_mA"
+        const char *key = strstr(buf, "current_mA");
+        if (key)
+        {
+            const char *colon = strchr(key, ':');
+            if (colon)
+            {
+                char *endptr = NULL;
+                value_mA = strtod(colon + 1, &endptr);
+                if (endptr && endptr != colon + 1)
+                    ok = true;
+            }
+        }
+    }
+
+    if (!ok)
+    {
+        httpd_resp_set_status(req, "400 Bad Request");
+        return httpd_resp_send(req, "Invalid number", HTTPD_RESP_USE_STRLEN);
+    }
+
+    float current_setpoint_mA = db_get_current_setpoint_mA();
+    if (current_setpoint_mA > 0.0 && fabs(value_mA - current_setpoint_mA) < 0.01)
+    {
+        // No change
+        ESP_LOGI(TAG, "Set current setpoint: %.3f mA (no change)", current_setpoint_mA);
+
+        httpd_resp_set_status(req, "200 OK");
+        char out[96];
+        int n = snprintf(out, sizeof(out), "{\"change\":false,\"current_mA\":%.3f}", current_setpoint_mA);
+        return httpd_resp_send(req, out, n);
+    }
+
+    // Clamp to a safe range (0 .. MAX_CURRENT_MA)
+    if (value_mA < 0.0)
+        value_mA = 0.0;
+    if (value_mA > MAX_CURRENT_MA)
+        value_mA = MAX_CURRENT_MA;
+
+    current_setpoint_mA = (float)value_mA;
+    db_set_current_setpoint_mA(current_setpoint_mA);
+    ESP_LOGI(TAG, "Set current setpoint: %.3f mA", current_setpoint_mA);
+
+    // TODO: call your control layer here, e.g. current_control_set_mA(g_current_setpoint_mA);
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    char out[96];
+    int n = snprintf(out, sizeof(out), "{\"change\":true,\"current_mA\":%.3f}", current_setpoint_mA);
+    return httpd_resp_send(req, out, n);
+}
+static esp_err_t get_current_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    float current_setpoint_mA = db_get_current_setpoint_mA();
+
+    char out[64];
+
+    int n = snprintf(out, sizeof(out), "{\"current_mA\":%.3f}", current_setpoint_mA);
+    return httpd_resp_send(req, out, n);
+}
+
 esp_err_t spiffs_init(void)
 {
     esp_vfs_spiffs_conf_t conf = {
@@ -105,9 +210,14 @@ esp_err_t server_init(void)
     httpd_uri_t root = {.uri = "/", .method = HTTP_GET, .handler = root_get_handler};
     httpd_uri_t chart = {.uri = "/chart.js", .method = HTTP_GET, .handler = chart_get_handler};
     httpd_uri_t data = {.uri = "/data", .method = HTTP_GET, .handler = data_get_handler};
+    httpd_uri_t set_current = {.uri = "/set-current", .method = HTTP_POST, .handler = set_current_handler};
+    httpd_uri_t get_current = {.uri = "/current", .method = HTTP_GET, .handler = get_current_handler};
+
     httpd_register_uri_handler(server, &root);
     httpd_register_uri_handler(server, &chart);
     httpd_register_uri_handler(server, &data);
+    httpd_register_uri_handler(server, &set_current);
+    httpd_register_uri_handler(server, &get_current);
     ESP_LOGI(TAG, "HTTP server started");
     return ESP_OK;
 }

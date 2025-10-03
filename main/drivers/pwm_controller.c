@@ -55,6 +55,15 @@ int pwm_controller_init(const pwm_controller_config_t *cfg)
     return 0;
 }
 
+int pwm_controller_get_resolution(uint32_t *res)
+{
+    pwm_controller_t *pc = &s_pwm_controller;
+    if (!pc || !res)
+        return -1;
+    *res = (1ULL << pc->cfg.duty_resolution) - 1ULL;
+    return 0;
+}
+
 int pwm_controller_set_duty(uint32_t duty_percent)
 {
     pwm_controller_t *pc = &s_pwm_controller;
@@ -74,6 +83,30 @@ int pwm_controller_set_duty(uint32_t duty_percent)
         return -1;
     if (ledc_update_duty(pc->cfg.speed_mode, pc->cfg.channel) != ESP_OK)
         return -2;
+    return 0;
+}
+
+int pwm_controller_set_duty_in_res_steps(uint32_t duty_in_res_steps)
+{
+    pwm_controller_t *pc = &s_pwm_controller;
+
+    if (!pc)
+        return -1;
+
+    const uint32_t bits = pc->cfg.duty_resolution;
+    if (bits == 0 || bits > 31) // guard against invalid/UB shift
+        return -2;
+
+    uint32_t max = ((1U << bits) - 1U);
+    if (duty_in_res_steps > max)
+        duty_in_res_steps = max;
+
+    pc->duty_percent = (duty_in_res_steps * 100U) / max;
+
+    if (ledc_set_duty(pc->cfg.speed_mode, pc->cfg.channel, duty_in_res_steps) != ESP_OK)
+        return -3;
+    if (ledc_update_duty(pc->cfg.speed_mode, pc->cfg.channel) != ESP_OK)
+        return -4;
     return 0;
 }
 
