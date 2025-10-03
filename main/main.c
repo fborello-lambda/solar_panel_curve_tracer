@@ -19,10 +19,16 @@
 
 static const char *TAG = "MAIN";
 
+// TODO: Create a state struct to hold all global state variables
+// inside db.c.
+// It will be easier to manage and avoid global variables.
+// But for now, just use global variables.
 i2c_master_bus_handle_t g_bus_handle;
 i2c_master_dev_handle_t g_dev_handle;
 ina219_cal_t g_cal;
 #define MAX_MEASUREMENTS_PER_CYCLE 10
+uint32_t g_step_size_per_measurement = 0;
+
 // --------------------------------------------------------------------------------
 
 #define BTN_GPIO 0
@@ -46,10 +52,34 @@ static void producer_task(void *arg);
 #define PRODUCER producer_task
 #endif
 
+// --------------------------------------------------------------------------------
+// The max_scale_current_mA is the maximum current the system can provide.
+// It's determined in the notebook analysis and is a constant. It depends on various factors
+// like the shunt resistor, the INA219 calibration, the power supply, etc.
+// The desired_range_mA is the current setpoint the user wants to reach. It can be changed by the user.
+static uint32_t calculate_step_size(float max_scale_current_mA, float desired_range_mA, uint32_t number_of_measurements, uint32_t pwm_resolution)
+{
+    if (max_scale_current_mA == 0)
+        return 1; // at least 1 mA step
+
+    // Calculate step size to reach max_current_mA in given number of measurements
+    // Use integer math to avoid floating point in this simple calculation
+    float step_f = ((float)pwm_resolution * desired_range_mA) / (max_scale_current_mA * (float)number_of_measurements);
+
+    ESP_LOGI(TAG, "calculate_step_size: max_scale_current_mA=%.3f desired_range_mA=%.3f number_of_measurements=%d pwm_resolution=%d => step_f=%.3f",
+             max_scale_current_mA, desired_range_mA, number_of_measurements, pwm_resolution, step_f);
+    // Should be smaller than pwm_resolution
+    if (step_f > (float)pwm_resolution)
+        step_f = (float)pwm_resolution;
+    // Round to nearest integer
+    uint32_t step = (uint32_t)(step_f + 0.5f);
+
+    return step;
+}
+
 // LED controller task: receive button events, debounce, toggle LED
 static void start_meas(void *arg)
 {
-    // remove local led_on; use shared g_led_on guarded by state_mtx
     gpio_set_level(LED_GPIO, 0);
 
     const TickType_t half_debounce = pdMS_TO_TICKS(DEBOUNCE_MS / 2);
@@ -262,10 +292,18 @@ static void dummy_producer_task(void *arg)
 
 static void producer_task(void *arg)
 {
-    int8_t duty = 0;
-    const int8_t stepsize = 100 / DB_MAX_SAMPLES;
+    // Calculate step size based on max current range, desired range and number of measurements
+    float desired_range_mA = db_get_current_setpoint_mA();
+    uint32_t pwm_res;
+    // Don't check return value
+    pwm_controller_get_resolution(&pwm_res);
 
-    pwm_controller_set_duty(duty);
+    uint32_t stepsize = calculate_step_size(MAX_CURRENT_MA, desired_range_mA, DB_MAX_SAMPLES, pwm_res);
+    ESP_LOGI(TAG, "producer_task: Calculated step size: %d || number of steps %d (desired_range=%.3f mA)", stepsize, DB_MAX_SAMPLES, desired_range_mA);
+
+    uint32_t duty = 0;
+
+    pwm_controller_set_duty_in_res_steps(duty);
     vTaskDelay(pdMS_TO_TICKS(250));
 
     ESP_LOGI(TAG, "producer_task: Starting data production");
@@ -350,8 +388,9 @@ static void producer_task(void *arg)
 
         ESP_LOGI(TAG, "producer_task: db_add succeeded (v=%.3f,i=%.3f) || attempts=%d", v, i, attempts);
 
-        duty = (duty + stepsize) % 100;
-        pwm_controller_set_duty(duty);
+        // Should not happen, but wrap around just in case.
+        duty = (duty + stepsize) % pwm_res;
+        pwm_controller_set_duty_in_res_steps(duty);
         vTaskDelay(pdMS_TO_TICKS(250));
     }
 
@@ -382,16 +421,15 @@ static void producer_task(void *arg)
 
 void app_main(void)
 {
-    int res = pwm_controller_init(NULL);
-    if (res != 0)
-    {
-        ESP_LOGE(TAG, "pwm_controller_init failed: %d", res);
-        return;
-    }
 
     if (PRODUCER == producer_task)
     {
-        system_init_all();
+        int res = pwm_controller_init(NULL);
+        if (res != 0)
+        {
+            ESP_LOGE(TAG, "pwm_controller_init failed: %d", res);
+            return;
+        }
 
         res = ina219_init(&g_bus_handle, &g_dev_handle, I2C_NUM_0, 6, 7, 100000, INA219_ADDRESS_DEFAULT);
         if (res != ESP_OK)
@@ -406,10 +444,12 @@ void app_main(void)
             ESP_LOGE(TAG, "ina219_calibrate_for_32V_10A failed");
             return;
         }
+
+        ESP_LOGI(TAG, "driver_ina219: Calibration Done -- Current_Divider_mA=%d  Power_Multiplier_mW=%d  Current_LSB=%.6f A/bit CAL=0x%04X",
+                 g_cal.current_divider_mA, g_cal.power_multiplier_mW, g_cal.current_lsb, g_cal.cal_value);
     }
 
-    ESP_LOGI(TAG, "driver_ina219: Calibration Done -- Current_Divider_mA=%d  Power_Multiplier_mW=%d  Current_LSB=%.6f A/bit CAL=0x%04X",
-             g_cal.current_divider_mA, g_cal.power_multiplier_mW, g_cal.current_lsb, g_cal.cal_value);
+    system_init_all();
 
     button_init_and_start_tasks();
 }

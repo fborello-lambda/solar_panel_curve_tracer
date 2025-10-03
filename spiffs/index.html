@@ -5,6 +5,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
     <title>SolarPanel-Measurements</title>
+    <link rel="icon"
+        href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%2210 0 100 100%22><text y=%22.90em%22 font-size=%2290%22>🌞</text></svg>">
+    </link>
     <style>
         :root {
             /* orange / sun theme */
@@ -36,7 +39,7 @@
         }
 
         /* ensure toolbar does not change chart height */
-        #toolbar {
+        .toolbar {
             display: flex;
             gap: 12px;
             align-items: center;
@@ -128,11 +131,11 @@
 
 <body>
     <div id="wrap">
-        <h1>Solar Panel I-V Curve</h1>
-
+        <h1 align="center">Solar Panel I-V Curve 📏📝</h1>
+        <div id="info" class="toolbar">points: 0</div>
+        <div id="selected" class="toolbar">selected: none</div>
         <!-- toolbar moved OUTSIDE chartBox so its wrapping won't resize the canvas -->
-        <div id="toolbar">
-            <div id="info">points: 0</div>
+        <div id="tb1" class="toolbar">
             <div class="controls">
                 <label class="ctrl-label">Vmin<input id="xMin" type="number" step="0.1"
                         style="width:70px;margin-left:6px"></label>
@@ -146,7 +149,22 @@
                 <button id="autoBtn" class="btn secondary">Auto</button>
                 <button id="unitBtn" class="btn tertiary">A/mA</button>
             </div>
-            <div id="selected">selected: none</div>
+        </div>
+
+        <div id="tb2" class="toolbar">
+            <div class="controls" id="putForm" style="display:flex;align-items:center;gap:8px">
+                <label class="ctrl-label">Set Current Range
+                    <input id="setI" type="number" step="0.001" inputmode="decimal" style="width:90px;margin-left:6px"
+                        placeholder="e.g. 12.5">
+                </label>
+                <select id="setIUnit" class="btn tertiary" style="padding:6px 8px">
+                    <option value="mA">mA</option>
+                    <option value="A">A</option>
+                </select>
+                <button id="sendI" class="btn">Send</button>
+                <span id="sendStatus" class="ctrl-label" aria-live="polite"></span>
+                <span id="currentRange" class="ctrl-label">Range: -- mA</span>
+            </div>
         </div>
 
         <div id="chartBox">
@@ -248,9 +266,65 @@
             const applyBtn = document.getElementById('applyBtn');
             const autoBtn = document.getElementById('autoBtn');
 
-            // polling state
-            let currentCount = 0;
-            let pollIntervalMs = isTouch ? 800 : 400;
+            // Used for POST requests
+            const POST_ENDPOINT = '/set-current'; // adjust to your server endpoint
+            const setI = document.getElementById('setI');
+            const setIUnit = document.getElementById('setIUnit');
+            const sendIBtn = document.getElementById('sendI');
+            const sendStatus = document.getElementById('sendStatus');
+            const currentRange = document.getElementById('currentRange');
+
+            async function refreshCurrentRange() {
+                try {
+                    const r = await fetch('/current', { cache: 'no-store' });
+                    if (!r.ok) return;
+                    const j = await r.json();
+                    currentRange.textContent = `Range: ${j.current_mA.toFixed(3)} mA`;
+                } catch (_) { }
+            }
+            refreshCurrentRange()
+            setInterval(refreshCurrentRange, 5000);
+
+            function setStatus(msg, ok = null) {
+                sendStatus.textContent = msg;
+                if (ok === true) sendStatus.style.color = '#8f8';
+                else if (ok === false) sendStatus.style.color = '#f88';
+                else sendStatus.style.color = '';
+            }
+
+            async function sendCurrent() {
+                const raw = parseFloat(setI.value);
+                if (!Number.isFinite(raw)) {
+                    setStatus('Enter a number', false);
+                    return;
+                }
+                let value_mA = setIUnit.value === 'A' ? raw * 1000.0 : raw;
+
+                try {
+                    sendIBtn.disabled = true;
+                    setStatus('Sending...');
+                    let resp;
+                    resp = await fetch(POST_ENDPOINT, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ current_mA: value_mA })
+                    });
+
+                    if (!resp.ok) {
+                        const msg = await resp.text().catch(() => resp.statusText);
+                        throw new Error(msg || ('HTTP ' + resp.status));
+                    }
+                    value_resp_mA = await resp.text().catch(() => resp.json().then(j => j.current_mA));
+                    setStatus(`Ok: ${value_mA} mA`, true);
+                    currentRange.textContent = `Range: ${value_mA.toFixed(3)} mA`;
+                } catch (e) {
+                    setStatus('Error: ' + (e.message || e), false);
+                } finally {
+                    sendIBtn.disabled = false;
+                }
+            }
+            sendIBtn.addEventListener('click', sendCurrent);
+            setI.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') sendCurrent(); });
 
             // true = chart data in mA, false = in A
             // The server always sends mA, so we start in mA mode
@@ -327,6 +401,9 @@
                 }
             }
 
+            // polling state
+            let currentCount = 0;
+            let pollIntervalMs = isTouch ? 800 : 400;
             async function tick() {
                 try {
                     const url = '/data?have=' + currentCount;
@@ -342,7 +419,6 @@
                             infoEl.textContent = 'points: ' + arr.length;
                             chart.update('none');
                             currentCount = arr.length;
-                            pollIntervalMs = isTouch ? 800 : 400;
                         }
                     } else {
                         // small JSON like {"count":N}
