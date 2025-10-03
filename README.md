@@ -17,6 +17,7 @@ cp .vscode/settings.json.example .vscode/settings.json
 ```
 
 Then choose the `esp32c3` target by clicking on the target in the bottom bar of VSCode, or by pressing Ctrl+Shift+P and typing `ESP-IDF: Set Espressif device target`.
+The project was developed with ESP-IDF version 5.5.1, so make sure to use the same version or a compatible one. You can set the ESP-IDF version by clicking on the ESP-IDF version in the bottom bar of VSCode, or by pressing Ctrl+Shift+P and typing `ESP-IDF: Select Current ESP-IDF Version`.
 
 By doing this, the ESP-IDF extension will use the correct toolchain and settings for the ESP32-C3.
 
