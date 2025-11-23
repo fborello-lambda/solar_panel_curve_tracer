@@ -29,6 +29,7 @@ static esp_err_t send_file(httpd_req_t *req, const char *path, const char *type)
 
 static esp_err_t root_get_handler(httpd_req_t *req) { return send_file(req, "/spiffs/index.html", "text/html; charset=utf-8"); }
 static esp_err_t chart_get_handler(httpd_req_t *req) { return send_file(req, "/spiffs/chart.umd.min.js", "application/javascript"); }
+static esp_err_t script_get_handler(httpd_req_t *req) { return send_file(req, "/spiffs/script.js", "application/javascript"); }
 static esp_err_t data_get_handler(httpd_req_t *req)
 {
     // Ensure data responses are not cached by clients/proxies
@@ -209,12 +210,14 @@ esp_err_t server_init(void)
 
     httpd_uri_t root = {.uri = "/", .method = HTTP_GET, .handler = root_get_handler};
     httpd_uri_t chart = {.uri = "/chart.js", .method = HTTP_GET, .handler = chart_get_handler};
+    httpd_uri_t script = {.uri = "/script.js", .method = HTTP_GET, .handler = script_get_handler};
     httpd_uri_t data = {.uri = "/data", .method = HTTP_GET, .handler = data_get_handler};
     httpd_uri_t set_current = {.uri = "/set-current", .method = HTTP_POST, .handler = set_current_handler};
     httpd_uri_t get_current = {.uri = "/current", .method = HTTP_GET, .handler = get_current_handler};
 
     httpd_register_uri_handler(server, &root);
     httpd_register_uri_handler(server, &chart);
+    httpd_register_uri_handler(server, &script);
     httpd_register_uri_handler(server, &data);
     httpd_register_uri_handler(server, &set_current);
     httpd_register_uri_handler(server, &get_current);

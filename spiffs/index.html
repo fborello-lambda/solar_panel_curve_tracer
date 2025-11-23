@@ -8,6 +8,12 @@
     <link rel="icon"
         href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%2210 0 100 100%22><text y=%22.90em%22 font-size=%2290%22>🌞</text></svg>">
     </link>
+    <!--
+    Could be stored in a separate CSS file (with SPIFFS, same as script.js):
+    <link href="/style.css" rel="stylesheet"/>
+    
+    But using inline CSS for simplicity.
+    -->
     <style>
         :root {
             /* orange / sun theme */
@@ -133,10 +139,11 @@
     <div id="wrap">
         <h1 align="center">Solar Panel I-V Curve 📏📝</h1>
         <div id="info" class="toolbar">points: 0</div>
-        <div id="selected" class="toolbar">selected: none</div>
+        <!-- <div id="selected" class="toolbar">selected: none</div> -->
         <!-- toolbar moved OUTSIDE chartBox so its wrapping won't resize the canvas -->
         <div id="tb1" class="toolbar">
             <div class="controls">
+                <!-- 
                 <label class="ctrl-label">Vmin<input id="xMin" type="number" step="0.1"
                         style="width:70px;margin-left:6px"></label>
                 <label class="ctrl-label">Vmax<input id="xMax" type="number" step="0.1"
@@ -146,7 +153,9 @@
                 <label class="ctrl-label">Imax<input id="yMax" type="number" step="0.1"
                         style="width:70px;margin-left:6px"></label>
                 <button id="applyBtn" class="btn" style="margin-left:6px">Apply</button>
+                -->
                 <button id="autoBtn" class="btn secondary">Auto</button>
+                <button id="autoPowerBtn" class="btn secondary">Auto Power</button>
                 <button id="unitBtn" class="btn tertiary">A/mA</button>
             </div>
         </div>
@@ -167,6 +176,11 @@
             </div>
         </div>
 
+        <div id="tb3" class="toolbar">
+            <span id="mpptCurrent" class="ctrl-label">MPPT Current: -- mA</span>
+            <span id="mpptVoltage" class="ctrl-label">MPPT Voltage: -- V</span>
+        </div>
+
         <div id="chartBox">
             <canvas id="chartCanvas"></canvas>
         </div>
@@ -174,283 +188,7 @@
     </div>
 
     <script src="/chart.js"></script>
-
-    <script>
-        (function () {
-            // read theme from CSS variables so JS does not hardcode hex strings
-            const css = getComputedStyle(document.documentElement);
-            const ACCENT = css.getPropertyValue('--accent').trim() || '#ff9800';
-            const FG = css.getPropertyValue('--fg').trim() || '#fff8ec';
-            const MUTED = css.getPropertyValue('--muted').trim() || '#ffcc99';
-
-            const infoEl = document.getElementById('info');
-            const selEl = document.getElementById('selected');
-            const canvas = document.getElementById('chartCanvas');
-            const isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
-
-            if (!window.Chart) {
-                document.body.insertAdjacentHTML('beforeend', '<pre style="color:#f88">Chart.js not found</pre>');
-                return;
-            }
-
-            const ctx = canvas.getContext('2d');
-
-            // create chart in outer scope so tick() can access it
-            const chart = new Chart(ctx, {
-                type: 'line',
-                data: {
-                    datasets: [{
-                        label: 'I(V)',
-                        data: [],
-                        parsing: false,
-                        borderColor: ACCENT,
-                        pointBackgroundColor: ACCENT,
-                        pointBorderColor: ACCENT,
-                        pointRadius: isTouch ? 6 : 4,
-                        hoverRadius: isTouch ? 10 : 6,
-                        borderWidth: 2,
-                        tension: 0.12
-                    }]
-                },
-                options: {
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    animation: false,
-                    interaction: { mode: 'nearest', axis: 'xy', intersect: true },
-                    plugins: {
-                        legend: { display: false },
-                        tooltip: {
-                            enabled: true,
-                            backgroundColor: 'rgba(0,0,0,0.8)',
-                            titleColor: FG,
-                            bodyColor: FG,
-                            callbacks: {
-                                title: (items) => { return 'V: ' + (items[0]?.raw?.x ?? ''); },
-                                label: (ctx) => 'I: ' + Number(ctx.raw.y).toFixed(3)
-                            }
-                        }
-                    },
-                    scales: {
-                        x: {
-                            type: 'linear',
-                            min: 0,
-                            max: 25,
-                            title: { display: true, text: 'Voltage [V]', color: FG },
-                            ticks: { color: MUTED }
-                        },
-                        y: {
-                            min: 0,
-                            max: 10,
-                            title: { display: true, text: 'Current [mA]', color: FG },
-                            ticks: { color: MUTED }
-                        }
-                    },
-                    onClick(evt) {
-                        // require intersect true so only actual point taps count
-                        const points = chart.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, true);
-                        if (points.length) {
-                            const p = chart.data.datasets[points[0].datasetIndex].data[points[0].index];
-                            selEl.textContent = 'selected: V=' + Number(p.x).toFixed(3) + ', I=' + Number(p.y).toFixed(3);
-                        } else {
-                            selEl.textContent = 'selected: none';
-                        }
-                    }
-                },
-            });
-
-            // axis controls (client-side only)
-            const xMin = document.getElementById('xMin');
-            const xMax = document.getElementById('xMax');
-            const yMin = document.getElementById('yMin');
-            const yMax = document.getElementById('yMax');
-            const applyBtn = document.getElementById('applyBtn');
-            const autoBtn = document.getElementById('autoBtn');
-
-            // Used for POST requests
-            const POST_ENDPOINT = '/set-current'; // adjust to your server endpoint
-            const setI = document.getElementById('setI');
-            const setIUnit = document.getElementById('setIUnit');
-            const sendIBtn = document.getElementById('sendI');
-            const sendStatus = document.getElementById('sendStatus');
-            const currentRange = document.getElementById('currentRange');
-
-            async function refreshCurrentRange() {
-                try {
-                    const r = await fetch('/current', { cache: 'no-store' });
-                    if (!r.ok) return;
-                    const j = await r.json();
-                    currentRange.textContent = `Range: ${j.current_mA.toFixed(3)} mA`;
-                } catch (_) { }
-            }
-            refreshCurrentRange()
-            setInterval(refreshCurrentRange, 5000);
-
-            function setStatus(msg, ok = null) {
-                sendStatus.textContent = msg;
-                if (ok === true) sendStatus.style.color = '#8f8';
-                else if (ok === false) sendStatus.style.color = '#f88';
-                else sendStatus.style.color = '';
-            }
-
-            async function sendCurrent() {
-                const raw = parseFloat(setI.value);
-                if (!Number.isFinite(raw)) {
-                    setStatus('Enter a number', false);
-                    return;
-                }
-                let value_mA = setIUnit.value === 'A' ? raw * 1000.0 : raw;
-
-                try {
-                    sendIBtn.disabled = true;
-                    setStatus('Sending...');
-                    let resp;
-                    resp = await fetch(POST_ENDPOINT, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ current_mA: value_mA })
-                    });
-
-                    if (!resp.ok) {
-                        const msg = await resp.text().catch(() => resp.statusText);
-                        throw new Error(msg || ('HTTP ' + resp.status));
-                    }
-                    value_resp_mA = await resp.text().catch(() => resp.json().then(j => j.current_mA));
-                    setStatus(`Ok: ${value_mA} mA`, true);
-                    currentRange.textContent = `Range: ${value_mA.toFixed(3)} mA`;
-                } catch (e) {
-                    setStatus('Error: ' + (e.message || e), false);
-                } finally {
-                    sendIBtn.disabled = false;
-                }
-            }
-            sendIBtn.addEventListener('click', sendCurrent);
-            setI.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') sendCurrent(); });
-
-            // true = chart data in mA, false = in A
-            // The server always sends mA, so we start in mA mode
-            let unitIsMilli = true;
-            const unitBtn = document.getElementById('unitBtn');
-
-            function applyLimits() {
-                const xm = parseFloat(xMin.value);
-                const xM = parseFloat(xMax.value);
-                const ym = parseFloat(yMin.value);
-                const yM = parseFloat(yMax.value);
-
-                if (Number.isFinite(xm)) chart.options.scales.x.min = xm; else delete chart.options.scales.x.min;
-                if (Number.isFinite(xM)) chart.options.scales.x.max = xM; else delete chart.options.scales.x.max;
-                if (Number.isFinite(ym)) chart.options.scales.y.min = ym; else delete chart.options.scales.y.min;
-                if (Number.isFinite(yM)) chart.options.scales.y.max = yM; else delete chart.options.scales.y.max;
-
-                chart.update('none');
-            }
-            applyBtn.addEventListener('click', applyLimits);
-
-            function autoScale() {
-                // remove fixed limits so Chart.js autoscale uses data
-                delete chart.options.scales.x.min;
-                delete chart.options.scales.x.max;
-                delete chart.options.scales.y.min;
-                delete chart.options.scales.y.max;
-                xMin.value = xMax.value = yMin.value = yMax.value = '';
-                chart.update('none');
-            }
-            autoBtn.addEventListener('click', autoScale);
-
-            function toggleUnits() {
-                // Adjust dataset values in-place
-                const data = chart.data.datasets[0].data;
-                if (data && data.length) {
-                    for (let i = 0; i < data.length; i++) {
-                        if (unitIsMilli) {
-                            // mA -> A
-                            data[i] = { x: data[i].x, y: data[i].y / 1000.0 };
-                        } else {
-                            // A -> mA
-                            data[i] = { x: data[i].x, y: data[i].y * 1000.0 };
-                        }
-                    }
-                }
-                // Update axis label & limits
-                if (unitIsMilli) {
-                    // switching to Amperes
-                    chart.options.scales.y.title.text = 'Current [A]';
-                    if (typeof chart.options.scales.y.min === 'number')
-                        chart.options.scales.y.min /= 1000.0;
-                    if (typeof chart.options.scales.y.max === 'number')
-                        chart.options.scales.y.max /= 1000.0;
-                } else {
-                    // switching to milliamperes
-                    chart.options.scales.y.title.text = 'Current [mA]';
-                    if (typeof chart.options.scales.y.min === 'number')
-                        chart.options.scales.y.min *= 1000.0;
-                    if (typeof chart.options.scales.y.max === 'number')
-                        chart.options.scales.y.max *= 1000.0;
-                }
-                unitIsMilli = !unitIsMilli;
-                chart.update('none');
-            }
-            unitBtn.addEventListener('click', toggleUnits);
-
-            function maybeConvertIncoming(arr) {
-                if (!unitIsMilli) {
-                    // Current chart is displaying Amperes; server sends mA -> convert
-                    for (let i = 0; i < arr.length; i++) {
-                        arr[i].y = arr[i].y / 1000.0;
-                    }
-                }
-            }
-
-            // polling state
-            let currentCount = 0;
-            let pollIntervalMs = isTouch ? 800 : 400;
-            async function tick() {
-                try {
-                    const url = '/data?have=' + currentCount;
-                    const r = await fetch(url, { cache: 'no-store' });
-                    const txt = await r.text();
-                    if (!txt) { throw new Error('empty response'); }
-
-                    if (txt[0] === '[') {
-                        const arr = JSON.parse(txt);
-                        if (Array.isArray(arr)) {
-                            maybeConvertIncoming(arr);
-                            chart.data.datasets[0].data = arr;
-                            infoEl.textContent = 'points: ' + arr.length;
-                            chart.update('none');
-                            currentCount = arr.length;
-                        }
-                    } else {
-                        // small JSON like {"count":N}
-                        let small = {};
-                        try { small = JSON.parse(txt); } catch (e) { small = {}; }
-                        const serverCount = small.count || 0;
-                        if (serverCount > currentCount) {
-                            // server has more -> request full next tick
-                            currentCount = 0;
-                        } else {
-                            // nothing new -> back off
-                            pollIntervalMs = Math.min(5000, pollIntervalMs + 200);
-                        }
-                    }
-                } catch (e) {
-                    console.error('tick failed', e);
-                    pollIntervalMs = Math.min(5000, pollIntervalMs + 500);
-                } finally {
-                    setTimeout(tick, pollIntervalMs);
-                }
-            }
-
-            // start
-            tick();
-
-            // helper: allow keyboard Enter to apply without clicking
-            [xMin, xMax, yMin, yMax].forEach(i => i.addEventListener('keydown', ev => { if (ev.key === 'Enter') applyLimits(); }));
-
-            // resize on orientation change
-            window.addEventListener('orientationchange', () => setTimeout(() => chart.resize(), 250), { passive: true });
-        })();
-    </script>
+    <script src="/script.js"></script>
 </body>
 
 </html>

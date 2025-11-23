@@ -124,6 +124,8 @@ static void start_meas(void *arg)
         if (led_state)
         {
             // start producer if none
+            db_reset(); // clear data when starting
+
             if (xSemaphoreTake(state_mtx, pdMS_TO_TICKS(10)) == pdTRUE)
             {
                 if (producer_task_handle == NULL)
