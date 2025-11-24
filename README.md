@@ -44,8 +44,7 @@ A prototype PCB was mounted on a perfboard, and the firmware was developed using
 ### Web interface
 
 <div align="center">
-    <img src="imgs/web_interface.jpeg" alt="Web interface" width="48%" style="max-width:400px;margin:0 6px;">
-    <img src="imgs/web_interface2.jpeg" alt="Web interface 2" width="48%" style="max-width:400px;margin:0 6px;">
+    <img src="imgs/web_interface.png" alt="Web interface" style="max-width:600px;margin:0 6px;">
 </div>
 
 The solar panel used is a Luxen 10W 12V panel. LN-10P

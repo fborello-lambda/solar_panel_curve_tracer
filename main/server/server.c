@@ -1,6 +1,9 @@
 #include "server.h"
 #include <math.h>
 
+extern bool measurement_is_running(void);
+extern bool measurement_request(bool);
+
 static const char *TAG = "server";
 
 static esp_err_t send_file(httpd_req_t *req, const char *path, const char *type)
@@ -29,6 +32,7 @@ static esp_err_t send_file(httpd_req_t *req, const char *path, const char *type)
 
 static esp_err_t root_get_handler(httpd_req_t *req) { return send_file(req, "/spiffs/index.html", "text/html; charset=utf-8"); }
 static esp_err_t chart_get_handler(httpd_req_t *req) { return send_file(req, "/spiffs/chart.umd.min.js", "application/javascript"); }
+static esp_err_t script_get_handler(httpd_req_t *req) { return send_file(req, "/spiffs/script.js", "application/javascript"); }
 static esp_err_t data_get_handler(httpd_req_t *req)
 {
     // Ensure data responses are not cached by clients/proxies
@@ -172,6 +176,28 @@ static esp_err_t set_current_handler(httpd_req_t *req)
     int n = snprintf(out, sizeof(out), "{\"change\":true,\"current_mA\":%.3f}", current_setpoint_mA);
     return httpd_resp_send(req, out, n);
 }
+
+static esp_err_t start_measurement_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    ESP_LOGI(TAG, "Start measurement requested");
+
+    if (measurement_is_running())
+    {
+        measurement_request(false);
+        return httpd_resp_send(req, "{\"running\":false}", HTTPD_RESP_USE_STRLEN);
+    }
+    // else is not running, start it
+    if (!measurement_request(true))
+    {
+        httpd_resp_set_status(req, "503 Service Unavailable");
+        return httpd_resp_send(req, "{\"error\":\"Failed to start measurement\"}", HTTPD_RESP_USE_STRLEN);
+    }
+
+    return httpd_resp_send(req, "{\"running\":true}", HTTPD_RESP_USE_STRLEN);
+}
+
 static esp_err_t get_current_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "application/json");
@@ -209,15 +235,19 @@ esp_err_t server_init(void)
 
     httpd_uri_t root = {.uri = "/", .method = HTTP_GET, .handler = root_get_handler};
     httpd_uri_t chart = {.uri = "/chart.js", .method = HTTP_GET, .handler = chart_get_handler};
+    httpd_uri_t script = {.uri = "/script.js", .method = HTTP_GET, .handler = script_get_handler};
     httpd_uri_t data = {.uri = "/data", .method = HTTP_GET, .handler = data_get_handler};
     httpd_uri_t set_current = {.uri = "/set-current", .method = HTTP_POST, .handler = set_current_handler};
     httpd_uri_t get_current = {.uri = "/current", .method = HTTP_GET, .handler = get_current_handler};
+    httpd_uri_t start_meas = {.uri = "/start-measurement", .method = HTTP_POST, .handler = start_measurement_handler};
 
     httpd_register_uri_handler(server, &root);
     httpd_register_uri_handler(server, &chart);
+    httpd_register_uri_handler(server, &script);
     httpd_register_uri_handler(server, &data);
     httpd_register_uri_handler(server, &set_current);
     httpd_register_uri_handler(server, &get_current);
+    httpd_register_uri_handler(server, &start_meas);
     ESP_LOGI(TAG, "HTTP server started");
     return ESP_OK;
 }

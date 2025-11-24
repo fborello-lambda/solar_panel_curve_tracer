@@ -41,5 +41,4 @@ void system_init_all(void)
     ESP_ERROR_CHECK(server_init());
 
     db_init();
-    // TODO maybe start GPIOs? and INA?
 }

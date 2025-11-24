@@ -42,6 +42,36 @@ static SemaphoreHandle_t state_mtx = NULL;
 /* new shared LED state (visible across tasks) */
 static volatile bool g_led_on = false;
 
+static void measurement_set_led_locked(bool on);
+static bool measurement_start_locked(void);
+static bool measurement_stop_locked(void);
+
+bool measurement_is_running(void)
+{
+    return g_led_on;
+}
+
+bool measurement_request(bool start)
+{
+    if (state_mtx == NULL)
+    {
+        ESP_LOGW(TAG, "measurement_request_stop: state mutex not ready");
+        return false;
+    }
+
+    bool stopped = false;
+    if (xSemaphoreTake(state_mtx, pdMS_TO_TICKS(50)) == pdTRUE)
+    {
+        stopped = start ? measurement_start_locked() : measurement_stop_locked();
+        xSemaphoreGive(state_mtx);
+    }
+    else
+    {
+        ESP_LOGW(TAG, "measurement_request_stop: failed to take mutex");
+    }
+    return stopped;
+}
+
 static void dummy_producer_task(void *arg);
 static void producer_task(void *arg);
 
@@ -51,6 +81,52 @@ static void producer_task(void *arg);
 #else
 #define PRODUCER producer_task
 #endif
+
+static void measurement_set_led_locked(bool on)
+{
+    g_led_on = on;
+    gpio_set_level(LED_GPIO, on ? 1 : 0);
+}
+
+static bool measurement_start_locked(void)
+{
+    if (g_led_on)
+        return false;
+
+    db_reset();
+
+    if (producer_task_handle == NULL)
+    {
+        if (xTaskCreate(PRODUCER, "producer", 4096, NULL, 5, &producer_task_handle) != pdPASS)
+        {
+            ESP_LOGE(TAG, "measurement_start_locked: failed to create producer task");
+            producer_task_handle = NULL;
+            return false;
+        }
+    }
+
+    measurement_set_led_locked(true);
+    ESP_LOGI(TAG, "Measurement cycle started");
+    return true;
+}
+
+static bool measurement_stop_locked(void)
+{
+    if (!g_led_on)
+        return false;
+
+    if (producer_task_handle)
+    {
+        db_reset();
+        pwm_controller_set_duty(0);
+        vTaskDelete(producer_task_handle);
+        producer_task_handle = NULL;
+    }
+
+    measurement_set_led_locked(false);
+    ESP_LOGI(TAG, "Measurement cycle stopped");
+    return true;
+}
 
 // --------------------------------------------------------------------------------
 // The max_scale_current_mA is the maximum current the system can provide.
@@ -77,12 +153,11 @@ static uint32_t calculate_step_size(float max_scale_current_mA, float desired_ra
     return step;
 }
 
-// LED controller task: receive button events, debounce, toggle LED
 static void start_meas(void *arg)
 {
     gpio_set_level(LED_GPIO, 0);
-
     const TickType_t half_debounce = pdMS_TO_TICKS(DEBOUNCE_MS / 2);
+
     for (;;)
     {
         // wait for ISR notification
@@ -90,70 +165,32 @@ static void start_meas(void *arg)
 
         // short wait so bounce settles, then sample
         vTaskDelay(half_debounce);
-
-        // active-low button (pull-up enabled): pressed when level == 0
-        int level = gpio_get_level(BTN_GPIO);
-        if (level != 0)
-        {
+        if (gpio_get_level(BTN_GPIO) != 0)
             continue;
-        }
 
         // confirm stable press
         vTaskDelay(half_debounce);
         if (gpio_get_level(BTN_GPIO) != 0)
             continue;
 
-        // toggle shared LED state under mutex and capture new state
-        bool led_state = false;
+        bool was_running = false;
+        bool changed = false;
+        bool attempted = false;
         if (xSemaphoreTake(state_mtx, pdMS_TO_TICKS(10)) == pdTRUE)
         {
-            g_led_on = !g_led_on;
-            led_state = g_led_on;
-            gpio_set_level(LED_GPIO, g_led_on ? 1 : 0);
+            was_running = g_led_on;
+            changed = was_running ? measurement_stop_locked() : measurement_start_locked();
+            attempted = true;
             xSemaphoreGive(state_mtx);
         }
         else
         {
-            // fallback: toggle physical LED (state may be inconsistent)
-            int cur = gpio_get_level(LED_GPIO);
-            gpio_set_level(LED_GPIO, cur ? 0 : 1);
-            led_state = gpio_get_level(LED_GPIO) ? true : false;
+            ESP_LOGW(TAG, "start_meas: failed to take state mutex");
         }
 
-        // Start or stop measurements based on led_state (local copy)
-        if (led_state)
+        if (attempted && !changed)
         {
-            // start producer if none
-            if (xSemaphoreTake(state_mtx, pdMS_TO_TICKS(10)) == pdTRUE)
-            {
-                if (producer_task_handle == NULL)
-                {
-                    if (xTaskCreate(PRODUCER, "producer", 4096, NULL, 5, &producer_task_handle) != pdPASS)
-                    {
-                        producer_task_handle = NULL;
-                    }
-                }
-                xSemaphoreGive(state_mtx);
-            }
-        }
-        else
-        {
-            // Stop measurement task
-            if (xSemaphoreTake(state_mtx, pdMS_TO_TICKS(10)) == pdTRUE)
-            {
-                if (producer_task_handle)
-                {
-                    // CHECK: db_reset() has another Semaphore inside.
-                    // It should be OK. The db_reset() function will not block for long.
-                    // But the inner Semaphore can block the state_mtx for a short time.
-                    db_reset();                 // clear data when stopping
-                    pwm_controller_set_duty(0); // set PWM to 0 when stopping
-                    vTaskDelete(producer_task_handle);
-                    producer_task_handle = NULL;
-                }
-                xSemaphoreGive(state_mtx);
-                ESP_LOGI(TAG, "Measurement cycle stopped and db_reset() called");
-            }
+            ESP_LOGW(TAG, "start_meas: %s request ignored", was_running ? "stop" : "start");
         }
 
         // wait until button released to avoid multiple toggles for one press
@@ -215,31 +252,31 @@ static void button_init_and_start_tasks(void)
 
 static void dummy_producer_task(void *arg)
 {
-    float x = 0.0f;
     int8_t duty = 0;
     pwm_controller_set_duty(duty);
     ESP_LOGI(TAG, "dummy_producer_task: Starting data production");
 
-    for (int i = 0; i < 12; ++i)
+    float x_array[] = {22.464, 22.215, 21.942, 21.661, 21.365, 21.059, 20.731, 20.391, 20.021, 19.612, 19.164, 18.624, 17.823, 16.489, 14.571, 6.140, 0.060, 0.060, 0.059, 0.060};
+    float y_array[] = {36.000, 72.000, 109.000, 147.000, 182.000, 219.000, 255.000, 292.000, 327.000, 364.000, 400.000, 436.000, 473.000, 510.000, 545.000, 579.000, 581.000, 582.000, 582.000, 583.000};
+
+    int len = sizeof(x_array) / sizeof(x_array[0]);
+    for (int i = 0; i < len; ++i)
     {
 
         ESP_LOGI(TAG, "dummy_producer_task: Set duty to %d%%", duty);
-
-        x += 1.0f;
-        float y = 20 * log10(1 / sqrt(pow((x / 10), 2) + 1));
 
         const int max_retries = 0;
         int attempts = 0;
         bool success = false;
 
-        while (!(success = db_add(x, y)) && attempts++ < max_retries)
+        while (!(success = db_add(x_array[i], y_array[i])) && attempts++ < max_retries)
         {
             vTaskDelay(pdMS_TO_TICKS(100));
         }
 
         if (!success)
         {
-            ESP_LOGW(TAG, "dummy_producer_task: db_add failed after %d attempts, dropping sample (x=%.3f,y=%.3f)", attempts, x, y);
+            ESP_LOGW(TAG, "dummy_producer_task: db_add failed after %d attempts, dropping sample (x=%.3f,y=%.3f)", attempts, x_array[i], y_array[i]);
         }
 
         // simulate time taken for multiple measurements
@@ -248,7 +285,7 @@ static void dummy_producer_task(void *arg)
             vTaskDelay(pdMS_TO_TICKS(10 * MAX_MEASUREMENTS_PER_CYCLE));
         }
 
-        ESP_LOGI(TAG, "dummy_producer_task: db_add succeeded (x=%.3f,y=%.3f) || attempts=%d", x, y, attempts);
+        ESP_LOGI(TAG, "dummy_producer_task: db_add succeeded (x=%.3f,y=%.3f) || attempts=%d", x_array[i], y_array[i], attempts);
 
         if (duty == 100)
         {
@@ -271,8 +308,7 @@ static void dummy_producer_task(void *arg)
     if (state_mtx && xSemaphoreTake(state_mtx, pdMS_TO_TICKS(10)) == pdTRUE)
     {
         producer_task_handle = NULL;
-        g_led_on = false;
-        gpio_set_level(LED_GPIO, 0);
+        measurement_set_led_locked(false);
         pwm_controller_set_duty(0);
         xSemaphoreGive(state_mtx);
     }
@@ -400,8 +436,7 @@ static void producer_task(void *arg)
     if (state_mtx && xSemaphoreTake(state_mtx, pdMS_TO_TICKS(10)) == pdTRUE)
     {
         producer_task_handle = NULL;
-        g_led_on = false;
-        gpio_set_level(LED_GPIO, 0);
+        measurement_set_led_locked(false);
         pwm_controller_set_duty(0);
         xSemaphoreGive(state_mtx);
     }
