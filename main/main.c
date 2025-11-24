@@ -75,7 +75,7 @@ bool measurement_request(bool start)
 static void dummy_producer_task(void *arg);
 static void producer_task(void *arg);
 
-#define DUMMY_PRODUCER
+// #define DUMMY_PRODUCER
 #ifdef DUMMY_PRODUCER
 #define PRODUCER dummy_producer_task
 #else
