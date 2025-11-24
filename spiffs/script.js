@@ -35,7 +35,7 @@
           hoverRadius: isTouch ? 10 : 6,
           borderWidth: 2,
           tension: 0.12,
-          yAxisID: "i", // current axis (left)
+          yAxisID: "y", // current axis (left)
         },
         {
           label: "P(V)",
@@ -91,20 +91,18 @@
       },
       scales: {
         x: {
-          id: "v",
           type: "linear",
           min: 0,
           max: 25,
-          title: { display: true, text: "Voltage [V]", color: FG },
+          title: { display: true, text: "Voltage [V]", color: MUTED },
           ticks: { color: MUTED },
         },
         y: {
-          id: "i",
           position: "left",
           min: 0,
           max: 10,
-          title: { display: true, text: "Current [mA]", color: FG },
-          ticks: { color: MUTED },
+          title: { display: true, text: "Current [mA]", color: ACCENT },
+          ticks: { color: ACCENT },
         },
         p: {
           id: "p",
@@ -114,28 +112,18 @@
           ticks: { color: "red" },
         },
       },
-      // onClick(evt) {
-      //     // require intersect true so only actual point taps count
-      //     const points = chart.getElementsAtEventForMode(evt, 'nearest', { intersect: true }, true);
-      //     if (points.length) {
-      //         const p = chart.data.datasets[points[0].datasetIndex].data[points[0].index];
-      //         selEl.textContent = 'selected: V=' + Number(p.x).toFixed(3) + ', I=' + Number(p.y).toFixed(3);
-      //     } else {
-      //         selEl.textContent = 'selected: none';
-      //     }
-      // }
     },
   });
 
   const autoBtn = document.getElementById("autoBtn");
   const autoPowerBtn = document.getElementById("autoPowerBtn");
 
-  // Used for POST requests
-  const POST_ENDPOINT = "/set-current";
+  // Used for set-current POST requests
+  const SET_CURRENT_POST_ENDPOINT = "/set-current";
   const setI = document.getElementById("setI");
   const setIUnit = document.getElementById("setIUnit");
   const sendIBtn = document.getElementById("sendI");
-  const sendStatus = document.getElementById("sendStatus");
+  const sendIStatus = document.getElementById("sendIStatus");
   const currentRange = document.getElementById("currentRange");
 
   async function refreshCurrentRange() {
@@ -149,26 +137,26 @@
   refreshCurrentRange();
   setInterval(refreshCurrentRange, 5000);
 
-  function setStatus(msg, ok = null) {
-    sendStatus.textContent = msg;
-    if (ok === true) sendStatus.style.color = "#8f8";
-    else if (ok === false) sendStatus.style.color = "#f88";
-    else sendStatus.style.color = "";
+  function setCurrentStatus(msg, ok = null) {
+    sendIStatus.textContent = msg;
+    if (ok === true) sendIStatus.style.color = "#8f8";
+    else if (ok === false) sendIStatus.style.color = "#f88";
+    else sendIStatus.style.color = "";
   }
 
   async function sendCurrent() {
     const raw = parseFloat(setI.value);
     if (!Number.isFinite(raw)) {
-      setStatus("Enter a number", false);
+      setCurrentStatus("Enter a number", false);
       return;
     }
     let value_mA = setIUnit.value === "A" ? raw * 1000.0 : raw;
 
     try {
       sendIBtn.disabled = true;
-      setStatus("Sending...");
+      setCurrentStatus("Sending...");
       let resp;
-      resp = await fetch(POST_ENDPOINT, {
+      resp = await fetch(SET_CURRENT_POST_ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ current_mA: value_mA }),
@@ -181,10 +169,10 @@
       value_resp_mA = await resp
         .text()
         .catch(() => resp.json().then((j) => j.current_mA));
-      setStatus(`Ok: ${value_mA} mA`, true);
+      setCurrentStatus(`Ok: ${value_mA} mA`, true);
       currentRange.textContent = `Range: ${value_mA.toFixed(3)} mA`;
     } catch (e) {
-      setStatus("Error: " + (e.message || e), false);
+      setCurrentStatus("Error: " + (e.message || e), false);
     } finally {
       sendIBtn.disabled = false;
     }
@@ -193,6 +181,51 @@
   setI.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter") sendCurrent();
   });
+
+  // Used for start-measurement POST requests
+  const START_MEASUREMENT_POST_ENDPOINT = "/start-measurement";
+  const startMeasBtn = document.getElementById("startMeasBtn");
+  const startMeasStatus = document.getElementById("startMeasStatus");
+
+  function setMeasStatus(msg, ok = null) {
+    if (ok === true) startMeasStatus.style.color = "#8f8";
+    else if (ok === false) startMeasStatus.style.color = "#f88";
+    else startMeasStatus.style.color = "";
+    startMeasStatus.textContent = `Status: ${msg}`;
+  }
+
+  async function startMeas() {
+    try {
+      startMeasBtn.disabled = true;
+      const resp = await fetch(START_MEASUREMENT_POST_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+
+      if (!resp.ok) {
+        const msg = await resp.text().catch(() => resp.statusText);
+        throw new Error(msg || "HTTP " + resp.status);
+      }
+      const payload = await resp.json().catch(() => ({}));
+      if (typeof payload.running === "boolean") {
+        if (payload.running) {
+          setMeasStatus("Measurement started", true);
+        } else {
+          setMeasStatus("Measurement stopped", false);
+        }
+      } else if (payload.error) {
+        throw new Error(payload.error);
+      } else {
+        setMeasStatus("Measurement status unknown", null);
+      }
+    } catch (e) {
+      setMeasStatus("Error: " + (e.message || e), false);
+    } finally {
+      startMeasBtn.disabled = false;
+    }
+  }
+  startMeasBtn.addEventListener("click", startMeas);
 
   // true = chart data in mA, false = in A
   // The server always sends mA, so we start in mA mode
@@ -287,13 +320,22 @@
   const mpptCurrentEl = document.getElementById("mpptCurrent");
   const mpptVoltageEl = document.getElementById("mpptVoltage");
 
-  function refreshMPPT(pArr) {
-    pArr.sort((a, b) => b.x * b.y - a.x * a.y); // sort by power descending
-    console.log("Sorted points for MPPT", pArr);
-    const mppt = pArr[0];
-    console.log("MPPT point", mppt);
-    mpptCurrentEl.textContent = `MPPT Current: ${mppt.y.toFixed(3)} mA`;
-    mpptVoltageEl.textContent = `MPPT Voltage: ${mppt.x.toFixed(3)} V`;
+  function refreshMPPT(data) {
+    if (!data || !data.length) {
+      mpptCurrentEl.textContent = "MPPT Current: --";
+      mpptVoltageEl.textContent = "MPPT Voltage: --";
+      return;
+    }
+
+    // I'm passing a const array to sort() and it even mutates the array... JS :p
+    // An explicit copy is needed.
+    const best = [...data].sort((a, b) => b.x * b.y - a.x * a.y)[0];
+
+    const currentDisplay = unitIsMilli
+      ? `${best.y.toFixed(3)} mA`
+      : `${best.y.toFixed(3)} A`;
+    mpptCurrentEl.textContent = `MPPT Current: ${currentDisplay}`;
+    mpptVoltageEl.textContent = `MPPT Voltage: ${best.x.toFixed(3)} V`;
   }
 
   // polling state
@@ -373,9 +415,6 @@
 
   // start
   tick();
-
-  // helper: allow keyboard Enter to apply without clicking
-  //[xMin, xMax, yMin, yMax].forEach(i => i.addEventListener('keydown', ev => { if (ev.key === 'Enter') applyLimits(); }));
 
   // resize on orientation change
   window.addEventListener(

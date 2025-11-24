@@ -52,6 +52,7 @@
             margin-bottom: 8px;
             flex-wrap: wrap;
             flex: 0 0 auto;
+            justify-content: center;
             /* do not let toolbar grow/shrink affect chartBox */
         }
 
@@ -138,51 +139,48 @@
 <body>
     <div id="wrap">
         <h1 align="center">Solar Panel I-V Curve 📏📝</h1>
-        <div id="info" class="toolbar">points: 0</div>
-        <!-- <div id="selected" class="toolbar">selected: none</div> -->
-        <!-- toolbar moved OUTSIDE chartBox so its wrapping won't resize the canvas -->
-        <div id="tb1" class="toolbar">
-            <div class="controls">
-                <!-- 
-                <label class="ctrl-label">Vmin<input id="xMin" type="number" step="0.1"
-                        style="width:70px;margin-left:6px"></label>
-                <label class="ctrl-label">Vmax<input id="xMax" type="number" step="0.1"
-                        style="width:70px;margin-left:6px"></label>
-                <label class="ctrl-label">Imin<input id="yMin" type="number" step="0.1"
-                        style="width:70px;margin-left:6px"></label>
-                <label class="ctrl-label">Imax<input id="yMax" type="number" step="0.1"
-                        style="width:70px;margin-left:6px"></label>
-                <button id="applyBtn" class="btn" style="margin-left:6px">Apply</button>
-                -->
-                <button id="autoBtn" class="btn secondary">Auto</button>
-                <button id="autoPowerBtn" class="btn secondary">Auto Power</button>
-                <button id="unitBtn" class="btn tertiary">A/mA</button>
-            </div>
-        </div>
 
-        <div id="tb2" class="toolbar">
+        <h5 class="toolbar">Set Current Range</h5>
+        <div id="tb1" class="toolbar">
             <div class="controls" id="putForm" style="display:flex;align-items:center;gap:8px">
-                <label class="ctrl-label">Set Current Range
-                    <input id="setI" type="number" step="0.001" inputmode="decimal" style="width:90px;margin-left:6px"
-                        placeholder="e.g. 12.5">
-                </label>
+                <input id="setI" type="number" step="0.001" inputmode="decimal" style="width:90px;margin-left:6px"
+                    placeholder="e.g. 12.5">
                 <select id="setIUnit" class="btn tertiary" style="padding:6px 8px">
                     <option value="mA">mA</option>
                     <option value="A">A</option>
                 </select>
                 <button id="sendI" class="btn">Send</button>
                 <span id="sendStatus" class="ctrl-label" aria-live="polite"></span>
-                <span id="currentRange" class="ctrl-label">Range: -- mA</span>
+
+            </div>
+        </div>
+
+        <div id="tb2" class="toolbar" style="width:100%;display:flex;justify-content:center">
+            <span id="currentRange" class="ctrl-label">Range: -- mA</span>
+            <span id="startMeasStatus" class="ctrl-label">Status: --</span>
+            <div class="controls">
+                <button id="startMeasBtn" class="btn secondary">Start Measurement</button>
             </div>
         </div>
 
         <div id="tb3" class="toolbar">
-            <span id="mpptCurrent" class="ctrl-label">MPPT Current: -- mA</span>
-            <span id="mpptVoltage" class="ctrl-label">MPPT Voltage: -- V</span>
+            <div class="controls">
+                <button id="autoBtn" class="btn secondary">Auto</button>
+                <button id="autoPowerBtn" class="btn secondary">Auto Power</button>
+                <button id="unitBtn" class="btn tertiary">A/mA</button>
+            </div>
         </div>
 
         <div id="chartBox">
             <canvas id="chartCanvas"></canvas>
+        </div>
+
+        <div id="tb4" class="toolbar">
+            <!-- Some vspace -->
+            <p></p>
+            <span id="mpptCurrent" class="ctrl-label">MPPT Current: -- mA</span>
+            <span id="mpptVoltage" class="ctrl-label">MPPT Voltage: -- V</span>
+            <span id="info" class="ctrl-label">points: 0</span>
         </div>
 
     </div>
