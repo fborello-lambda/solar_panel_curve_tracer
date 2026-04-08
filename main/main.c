@@ -16,6 +16,7 @@
 
 #include "pwm_controller.h"
 #include "driver_ina219.h"
+#include "led_controller.h"
 
 static const char *TAG = "MAIN";
 
@@ -32,7 +33,7 @@ uint32_t g_step_size_per_measurement = 0;
 // --------------------------------------------------------------------------------
 
 #define BTN_GPIO 0
-#define LED_GPIO 1
+#define LED_GPIO GPIO_NUM_5
 #define DEBOUNCE_MS 100
 
 static TaskHandle_t meas_task_handle = NULL;
@@ -75,7 +76,7 @@ bool measurement_request(bool start)
 static void dummy_producer_task(void *arg);
 static void producer_task(void *arg);
 
-// #define DUMMY_PRODUCER
+#define DUMMY_PRODUCER
 #ifdef DUMMY_PRODUCER
 #define PRODUCER dummy_producer_task
 #else
@@ -85,7 +86,14 @@ static void producer_task(void *arg);
 static void measurement_set_led_locked(bool on)
 {
     g_led_on = on;
-    gpio_set_level(LED_GPIO, on ? 1 : 0);
+    if (on)
+    {
+        led_set_color(LED_GPIO, (led_color_t){.r = 0, .g = 20, .b = 0});
+    }
+    else
+    {
+        led_clear(LED_GPIO);
+    }
 }
 
 static bool measurement_start_locked(void)
@@ -155,7 +163,7 @@ static uint32_t calculate_step_size(float max_scale_current_mA, float desired_ra
 
 static void start_meas(void *arg)
 {
-    gpio_set_level(LED_GPIO, 0);
+    led_clear(LED_GPIO);
     const TickType_t half_debounce = pdMS_TO_TICKS(DEBOUNCE_MS / 2);
 
     for (;;)
@@ -224,9 +232,8 @@ static void button_init_and_start_tasks(void)
         // handle error or log
     }
 
-    // configure LED GPIO (output)
-    gpio_set_direction(LED_GPIO, GPIO_MODE_OUTPUT);
-    gpio_set_level(LED_GPIO, 0);
+    ESP_ERROR_CHECK(led_init(LED_GPIO));
+    ESP_ERROR_CHECK(led_clear(LED_GPIO));
 
     // start led task and keep handle
     if (xTaskCreate(start_meas, "start_meas", 2048, NULL, 5, &meas_task_handle) != pdPASS)
@@ -248,6 +255,22 @@ static void button_init_and_start_tasks(void)
     gpio_install_isr_service(0);
     gpio_isr_handler_add(BTN_GPIO, gpio_isr_handler, (void *)(uintptr_t)BTN_GPIO);
 }
+
+static void blink_task(void *arg)
+{
+    const led_blink_cfg_t *cfg = (const led_blink_cfg_t *)arg;
+
+    ESP_ERROR_CHECK(led_init(cfg->gpio));
+
+    for (;;)
+    {
+        ESP_ERROR_CHECK(led_set_color(cfg->gpio, cfg->color));
+        vTaskDelay(pdMS_TO_TICKS(cfg->delay_ms));
+        ESP_ERROR_CHECK(led_clear(cfg->gpio));
+        vTaskDelay(pdMS_TO_TICKS(cfg->delay_ms));
+    }
+}
+
 // --------------------------------------------------------------------------------
 
 static void dummy_producer_task(void *arg)
@@ -318,7 +341,7 @@ static void dummy_producer_task(void *arg)
         producer_task_handle = NULL;
         g_led_on = false;
         pwm_controller_set_duty(0);
-        gpio_set_level(LED_GPIO, 0);
+        led_clear(LED_GPIO);
     }
 
     ESP_LOGI(TAG, "dummy_producer_task: Deleting self");
@@ -446,7 +469,7 @@ static void producer_task(void *arg)
         producer_task_handle = NULL;
         g_led_on = false;
         pwm_controller_set_duty(0);
-        gpio_set_level(LED_GPIO, 0);
+        led_clear(LED_GPIO);
     }
 
     ESP_LOGI(TAG, "producer_task: Deleting self");
@@ -485,6 +508,22 @@ void app_main(void)
     }
 
     system_init_all();
+
+    static const led_blink_cfg_t cfg1 = {
+        .gpio = LED_GPIO,
+        .delay_ms = 300,
+        .color = {.r = 55, .g = 0, .b = 0},
+    };
+
+    xTaskCreate(blink_task, "led1", 2048, (void *)&cfg1, 4, NULL);
+
+    static const led_blink_cfg_t cfg2 = {
+        .gpio = GPIO_NUM_10,
+        .delay_ms = 300,
+        .color = {.r = 0, .g = 55, .b = 55},
+    };
+
+    xTaskCreate(blink_task, "led2", 2048, (void *)&cfg2, 4, NULL);
 
     button_init_and_start_tasks();
 }
