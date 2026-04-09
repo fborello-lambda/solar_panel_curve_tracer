@@ -16,17 +16,39 @@
 
 #include "pwm_controller.h"
 #include "driver_ina219.h"
-#include "driver_ssd1306.h"
+#include "driver_sh1106.h"
 #include "driver_encoder.h"
 #include "led_controller.h"
+#include "qrcode.h"
 
 static const char *TAG = "MAIN";
+
+typedef enum
+{
+    UI_SCREEN_HOME = 0,
+    UI_SCREEN_MENU,
+    UI_SCREEN_ACTION_QR,
+    UI_SCREEN_ACTION_MEASURE,
+} ui_screen_t;
+
+typedef enum
+{
+    UI_QR_WIFI = 0,
+    UI_QR_AP_IP,
+} ui_qr_kind_t;
+
+typedef enum
+{
+    HOME_SECTION_NETWORK = 0,
+    HOME_SECTION_MEASURE,
+    HOME_SECTION_COUNT,
+} home_section_t;
 
 typedef struct
 {
     i2c_master_bus_handle_t i2c_bus;
     i2c_master_dev_handle_t ina_dev;
-    ssd1306_t display;
+    sh1106_t display;
     ina219_cal_t ina_cal;
 
     TaskHandle_t producer_task;
@@ -37,6 +59,13 @@ typedef struct
     bool display_enabled;
     bool measurement_running;
     char wifi_qr_payload[128];
+    uint8_t qr_frame[SH1106_FB_SIZE];
+    bool qr_frame_valid;
+    ui_screen_t ui_screen;
+    ui_qr_kind_t ui_qr_kind;
+    int ui_home_index;
+    int ui_menu_index;
+    bool display_dirty;
 } app_state_t;
 
 static app_state_t g_app = {0};
@@ -53,6 +82,7 @@ uint32_t g_step_size_per_measurement = 0;
 #define WS2812_GPIO GPIO_NUM_10
 #define OLED_ROTATE_180 false
 #define OLED_COLUMN_OFFSET 2
+#define OLED_QR_Y_OFFSET 3
 #define ENC_DT_GPIO GPIO_NUM_2
 #define ENC_CLK_GPIO GPIO_NUM_3
 #define ENC_SW_GPIO GPIO_NUM_4
@@ -90,9 +120,152 @@ bool measurement_request(bool start)
 static void dummy_producer_task(void *arg);
 static void producer_task(void *arg);
 static void display_task(void *arg);
-static void encoder_log_task(void *arg);
+static void encoder_ui_task(void *arg);
 
-static void encoder_log_task(void *arg)
+static int wrap_index(int value, int count)
+{
+    if (count <= 0)
+    {
+        return 0;
+    }
+
+    while (value < 0)
+    {
+        value += count;
+    }
+    while (value >= count)
+    {
+        value -= count;
+    }
+    return value;
+}
+
+static const char *ui_home_title(int index)
+{
+    static const char *titles[HOME_SECTION_COUNT] = {
+        "NETWORK",
+        "MEASURE",
+    };
+
+    int i = wrap_index(index, HOME_SECTION_COUNT);
+    return titles[i];
+}
+
+static const char *ui_menu_item_label(int home_index, int menu_index)
+{
+    if (home_index == HOME_SECTION_NETWORK)
+    {
+        if (menu_index == 0)
+        {
+            return "SHOW WIFI QR";
+        }
+        if (menu_index == 1)
+        {
+            return "SHOW APP QR";
+        }
+        return "BACK";
+    }
+
+    if (menu_index == 1)
+    {
+        return "BACK";
+    }
+
+    return measurement_is_running() ? "STOP MEASURE" : "START MEASURE";
+}
+
+static int ui_menu_item_count(int home_index)
+{
+    if (home_index == HOME_SECTION_NETWORK)
+    {
+        return 3;
+    }
+    return 2;
+}
+
+static void display_mark_dirty(void)
+{
+    g_app.display_dirty = true;
+    if (g_app.display_task != NULL)
+    {
+        xTaskNotifyGive(g_app.display_task);
+    }
+}
+
+static void ui_set_screen(ui_screen_t screen)
+{
+    g_app.ui_screen = screen;
+    display_mark_dirty();
+}
+
+static void ui_init_state(void)
+{
+    g_app.ui_screen = UI_SCREEN_HOME;
+    g_app.ui_qr_kind = UI_QR_WIFI;
+    g_app.ui_home_index = HOME_SECTION_NETWORK;
+    g_app.ui_menu_index = 0;
+    display_mark_dirty();
+}
+
+static void ui_on_rotate(int dir)
+{
+    if (g_app.ui_screen == UI_SCREEN_HOME)
+    {
+        g_app.ui_home_index = wrap_index(g_app.ui_home_index + dir, HOME_SECTION_COUNT);
+        display_mark_dirty();
+        return;
+    }
+
+    if (g_app.ui_screen == UI_SCREEN_MENU)
+    {
+        g_app.ui_menu_index = wrap_index(g_app.ui_menu_index + dir, ui_menu_item_count(g_app.ui_home_index));
+        display_mark_dirty();
+    }
+}
+
+static void ui_on_button(void)
+{
+    if (g_app.ui_screen == UI_SCREEN_HOME)
+    {
+        g_app.ui_menu_index = 0;
+        ui_set_screen(UI_SCREEN_MENU);
+        return;
+    }
+
+    if (g_app.ui_screen == UI_SCREEN_MENU)
+    {
+        int item_count = ui_menu_item_count(g_app.ui_home_index);
+        int back_index = item_count - 1;
+
+        if (g_app.ui_menu_index == back_index)
+        {
+            ui_set_screen(UI_SCREEN_HOME);
+            return;
+        }
+
+        if (g_app.ui_home_index == HOME_SECTION_NETWORK)
+        {
+            g_app.ui_qr_kind = (g_app.ui_menu_index == 0) ? UI_QR_WIFI : UI_QR_AP_IP;
+            ui_set_screen(UI_SCREEN_ACTION_QR);
+            return;
+        }
+
+        bool start = !measurement_is_running();
+        if (!measurement_request(start))
+        {
+            ESP_LOGW(TAG, "UI: measurement %s request ignored", start ? "start" : "stop");
+        }
+        ui_set_screen(UI_SCREEN_ACTION_MEASURE);
+        return;
+    }
+
+    if (g_app.ui_screen == UI_SCREEN_ACTION_QR || g_app.ui_screen == UI_SCREEN_ACTION_MEASURE)
+    {
+        ui_set_screen(UI_SCREEN_MENU);
+    }
+}
+
+static void encoder_ui_task(void *arg)
 {
     (void)arg;
 
@@ -107,20 +280,17 @@ static void encoder_log_task(void *arg)
         if (ev.type == ENCODER_EVENT_CW)
         {
             ESP_LOGI(TAG, "ENCODER: CW pos=%ld t=%lu", (long)ev.position, (unsigned long)ev.timestamp_ms);
+            ui_on_rotate(+1);
         }
         else if (ev.type == ENCODER_EVENT_CCW)
         {
             ESP_LOGI(TAG, "ENCODER: CCW pos=%ld t=%lu", (long)ev.position, (unsigned long)ev.timestamp_ms);
+            ui_on_rotate(-1);
         }
         else
         {
             ESP_LOGI(TAG, "ENCODER: BUTTON pos=%ld t=%lu", (long)ev.position, (unsigned long)ev.timestamp_ms);
-
-            bool start = !measurement_is_running();
-            if (!measurement_request(start))
-            {
-                ESP_LOGW(TAG, "ENCODER: measurement %s request ignored", start ? "start" : "stop");
-            }
+            ui_on_button();
         }
     }
 }
@@ -165,102 +335,197 @@ static void build_wifi_qr_payload(char *out, size_t out_size)
     }
 }
 
-static uint32_t fnv1a32(const char *txt)
+typedef struct
 {
-    uint32_t h = 2166136261u;
-    for (size_t i = 0; txt && txt[i] != '\0'; i++)
+    uint8_t *fb;
+    int cell_px;
+    int quiet_zone;
+} qr_render_ctx_t;
+
+static void qr_draw_to_oled_cb(esp_qrcode_handle_t qrcode, void *user_data)
+{
+    qr_render_ctx_t *ctx = (qr_render_ctx_t *)user_data;
+    if (!ctx || !ctx->fb || !qrcode)
     {
-        h ^= (uint8_t)txt[i];
-        h *= 16777619u;
+        return;
     }
-    return h;
-}
 
-static bool qr_finder_at(int x, int y, int ox, int oy)
-{
-    if (x < ox || x >= ox + 7 || y < oy || y >= oy + 7)
+    int size = esp_qrcode_get_size(qrcode);
+    int quiet = ctx->quiet_zone;
+    int cell_px = ctx->cell_px;
+    int modules = size + (quiet * 2);
+
+    while ((modules * cell_px) > (SH1106_HEIGHT - 2) && cell_px > 1)
     {
-        return false;
+        cell_px--;
     }
-    int dx = x - ox;
-    int dy = y - oy;
-    bool border = (dx == 0 || dx == 6 || dy == 0 || dy == 6);
-    bool center = (dx >= 2 && dx <= 4 && dy >= 2 && dy <= 4);
-    return border || center;
-}
+    while (((size + (quiet * 2)) * cell_px) > (SH1106_HEIGHT - 2) && quiet > 0)
+    {
+        quiet--;
+    }
 
-static void draw_qr_placeholder(uint8_t *fb, const char *payload)
-{
-    const int modules = 21;
-    const int cell_px = 2;
-    const int qr_px = modules * cell_px;
-    const int x0 = (SSD1306_WIDTH - qr_px) / 2;
-    const int y0 = 12;
+    modules = size + (quiet * 2);
+    int qr_px = modules * cell_px;
+    int x0 = (SH1106_WIDTH - qr_px) / 2;
+    int y0 = ((SH1106_HEIGHT - qr_px) / 2) + OLED_QR_Y_OFFSET;
 
-    const uint32_t h = fnv1a32(payload);
+    if (y0 < 1)
+    {
+        y0 = 1;
+    }
+    if (y0 + qr_px > SH1106_HEIGHT - 1)
+    {
+        y0 = SH1106_HEIGHT - qr_px - 1;
+    }
 
-    ssd1306_fb_draw_rect(fb, x0 - 2, y0 - 2, qr_px + 4, qr_px + 4, true, false);
-    ssd1306_fb_draw_rect(fb, x0 - 2, y0 - 2, qr_px + 4, qr_px + 4, false, true);
+    sh1106_fb_draw_rect(ctx->fb, x0 - 1, y0 - 1, qr_px + 2, qr_px + 2, false, true);
 
     for (int y = 0; y < modules; y++)
     {
         for (int x = 0; x < modules; x++)
         {
+            int mx = x - quiet;
+            int my = y - quiet;
             bool on = false;
-            if (qr_finder_at(x, y, 0, 0) || qr_finder_at(x, y, modules - 7, 0) || qr_finder_at(x, y, 0, modules - 7))
+
+            if (mx >= 0 && my >= 0 && mx < size && my < size)
             {
-                on = true;
-            }
-            else
-            {
-                uint32_t mix = h ^ (uint32_t)(x * 0x45d9f3bu) ^ (uint32_t)(y * 0x27d4eb2du) ^ (uint32_t)((x * y + 17) * 2654435761u);
-                on = (mix & 0x1u) != 0;
+                on = esp_qrcode_get_module(qrcode, mx, my);
             }
 
             if (on)
             {
-                ssd1306_fb_draw_rect(fb, x0 + (x * cell_px), y0 + (y * cell_px), cell_px, cell_px, true, true);
+                sh1106_fb_draw_rect(ctx->fb,
+                                    x0 + x * cell_px,
+                                    y0 + y * cell_px,
+                                    cell_px,
+                                    cell_px,
+                                    true,
+                                    true);
             }
         }
     }
 }
 
-static void render_display_frame(uint8_t *fb, uint32_t frame_idx)
+static void draw_real_qr_to_fb(uint8_t *fb, const char *payload)
 {
-    ssd1306_fb_clear(fb, false);
+    if (!fb || !payload || payload[0] == '\0')
+    {
+        return;
+    }
 
-    if ((frame_idx % 2) == 0)
+    qr_render_ctx_t ctx = {
+        .fb = fb,
+        .cell_px = 2,
+        .quiet_zone = 2,
+    };
+
+    esp_qrcode_config_t cfg = ESP_QRCODE_CONFIG_DEFAULT();
+    cfg.display_func_with_cb = qr_draw_to_oled_cb;
+    cfg.user_data = &ctx;
+    cfg.max_qrcode_version = 2;
+    cfg.qrcode_ecc_level = ESP_QRCODE_ECC_LOW;
+
+    if (esp_qrcode_generate(&cfg, payload) != ESP_OK)
     {
-        ssd1306_fb_draw_text(fb, 0, 0, "AP QR");
-        draw_qr_placeholder(fb, g_app.wifi_qr_payload);
-        ssd1306_fb_draw_text(fb, 0, 56, "SCAN TO JOIN");
+        sh1106_fb_draw_text(fb, 0, 0, "QR GEN ERROR");
+        sh1106_fb_draw_text(fb, 0, 12, wifi_softap_ssid());
     }
-    else
+}
+
+static void render_display_frame(uint8_t *fb)
+{
+    sh1106_fb_clear(fb, false);
+
+    if (g_app.ui_screen == UI_SCREEN_HOME)
     {
-        ssd1306_fb_draw_text(fb, 0, 0, "SOLAR TRACER");
-        ssd1306_fb_draw_text(fb, 0, 12, measurement_is_running() ? "MEAS: RUNNING" : "MEAS: IDLE");
-        ssd1306_fb_draw_text(fb, 0, 24, "AP SSID:");
-        ssd1306_fb_draw_text(fb, 0, 34, wifi_softap_ssid());
-        ssd1306_fb_draw_text(fb, 0, 46, "WEB: 192.168.4.1");
+        char home0[24] = {0};
+        char home1[24] = {0};
+
+        snprintf(home0, sizeof(home0), "%s %s",
+                 g_app.ui_home_index == HOME_SECTION_NETWORK ? ">>" : "  ",
+                 ui_home_title(HOME_SECTION_NETWORK));
+        snprintf(home1, sizeof(home1), "%s %s",
+                 g_app.ui_home_index == HOME_SECTION_MEASURE ? ">>" : "  ",
+                 ui_home_title(HOME_SECTION_MEASURE));
+
+        sh1106_fb_draw_text(fb, 0, 0, "HOME");
+        sh1106_fb_draw_text(fb, 0, 20, home0);
+        sh1106_fb_draw_text(fb, 0, 34, home1);
+        sh1106_fb_draw_text(fb, 0, 56, "L/R MOVE BTN OK");
+        return;
     }
+
+    if (g_app.ui_screen == UI_SCREEN_MENU)
+    {
+        char line0[24] = {0};
+        char line1[24] = {0};
+        char line2[24] = {0};
+        int item_count = ui_menu_item_count(g_app.ui_home_index);
+
+        snprintf(line0, sizeof(line0), "%s %s",
+                 g_app.ui_menu_index == 0 ? ">>" : "  ",
+                 ui_menu_item_label(g_app.ui_home_index, 0));
+        snprintf(line1, sizeof(line1), "%s %s",
+                 g_app.ui_menu_index == 1 ? ">>" : "  ",
+                 ui_menu_item_label(g_app.ui_home_index, 1));
+        if (item_count > 2)
+        {
+            snprintf(line2, sizeof(line2), "%s %s",
+                     g_app.ui_menu_index == 2 ? ">>" : "  ",
+                     ui_menu_item_label(g_app.ui_home_index, 2));
+        }
+
+        sh1106_fb_draw_text(fb, 0, 0, "MENU");
+        sh1106_fb_draw_text(fb, 0, 10, ui_home_title(g_app.ui_home_index));
+        sh1106_fb_draw_text(fb, 0, 22, line0);
+        sh1106_fb_draw_text(fb, 0, 34, line1);
+        if (item_count > 2)
+        {
+            sh1106_fb_draw_text(fb, 0, 46, line2);
+        }
+        sh1106_fb_draw_text(fb, 0, 56, "L/R MOVE BTN OK");
+        return;
+    }
+
+    if (g_app.ui_screen == UI_SCREEN_ACTION_QR)
+    {
+        const char *payload = (g_app.ui_qr_kind == UI_QR_AP_IP) ? "http://192.168.4.1" : g_app.wifi_qr_payload;
+        draw_real_qr_to_fb(fb, payload);
+        return;
+    }
+
+    sh1106_fb_draw_text(fb, 0, 0, "MEASURE");
+    sh1106_fb_draw_text(fb, 0, 18, measurement_is_running() ? "STATE: RUNNING" : "STATE: STOPPED");
+    sh1106_fb_draw_text(fb, 0, 34, "BTN BACK");
+    sh1106_fb_draw_text(fb, 0, 48, "USE MENU TO");
+    sh1106_fb_draw_text(fb, 0, 56, "START OR STOP");
 }
 
 static void display_task(void *arg)
 {
     (void)arg;
 
-    uint8_t fb[SSD1306_FB_SIZE];
-    uint32_t frame_idx = 0;
-
     while (g_app.display_enabled)
     {
-        render_display_frame(fb, frame_idx++);
-        esp_err_t ret = ssd1306_flush(&g_app.display, fb, sizeof(fb));
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(250));
+
+        if (!g_app.display_dirty)
+        {
+            continue;
+        }
+
+        render_display_frame(g_app.qr_frame);
+        g_app.qr_frame_valid = true;
+
+        esp_err_t ret = sh1106_flush(&g_app.display, g_app.qr_frame, sizeof(g_app.qr_frame));
         if (ret != ESP_OK)
         {
             ESP_LOGW(TAG, "display_task: flush failed: %s", esp_err_to_name(ret));
+            continue;
         }
-        vTaskDelay(pdMS_TO_TICKS(3000));
+
+        g_app.display_dirty = false;
     }
 
     vTaskDelete(NULL);
@@ -277,15 +542,15 @@ static void display_init_and_start(void)
     }
 
     const uint8_t candidate_addrs[] = {
-        SSD1306_DEFAULT_I2C_ADDR, // standard 7-bit 0x3C
-        SSD1306_ALT_I2C_ADDR,     // alternate 7-bit 0x3D
+        SH1106_DEFAULT_I2C_ADDR, // standard 7-bit 0x3C
+        SH1106_ALT_I2C_ADDR,     // alternate 7-bit 0x3D
     };
 
     esp_err_t ret = ESP_FAIL;
     uint8_t selected_addr = 0;
     for (size_t i = 0; i < sizeof(candidate_addrs) / sizeof(candidate_addrs[0]); i++)
     {
-        ret = ssd1306_init_on_bus(&g_app.display, g_app.i2c_bus, candidate_addrs[i], 400000);
+        ret = sh1106_init_on_bus(&g_app.display, g_app.i2c_bus, candidate_addrs[i], 400000);
         if (ret == ESP_OK)
         {
             selected_addr = candidate_addrs[i];
@@ -294,18 +559,20 @@ static void display_init_and_start(void)
     }
     if (ret != ESP_OK)
     {
-        ESP_LOGW(TAG, "display_init_and_start: SSD1306 init failed at 0x%02X/0x%02X: %s",
-                 SSD1306_DEFAULT_I2C_ADDR, SSD1306_ALT_I2C_ADDR, esp_err_to_name(ret));
+        ESP_LOGW(TAG, "display_init_and_start: SH1106 init failed at 0x%02X/0x%02X: %s",
+                 SH1106_DEFAULT_I2C_ADDR, SH1106_ALT_I2C_ADDR, esp_err_to_name(ret));
         return;
     }
 
-    ret = ssd1306_set_rotation(&g_app.display, OLED_ROTATE_180);
+    ret = sh1106_set_rotation(&g_app.display, OLED_ROTATE_180);
     if (ret != ESP_OK)
     {
         ESP_LOGW(TAG, "display_init_and_start: failed to set OLED rotation: %s", esp_err_to_name(ret));
     }
 
-    ssd1306_set_column_offset(&g_app.display, OLED_COLUMN_OFFSET);
+    sh1106_set_column_offset(&g_app.display, OLED_COLUMN_OFFSET);
+
+    ui_init_state();
 
     g_app.display_enabled = true;
     if (xTaskCreate(display_task, "display", 4096, NULL, 4, &g_app.display_task) != pdPASS)
@@ -315,7 +582,9 @@ static void display_init_and_start(void)
         return;
     }
 
-    ESP_LOGI(TAG, "display_init_and_start: OLED started at 0x%02X (offset=%u), AP payload='%s'",
+    display_mark_dirty();
+
+    ESP_LOGI(TAG, "display_init_and_start: OLED menu UI started at 0x%02X (offset=%u), AP payload='%s'",
              selected_addr, OLED_COLUMN_OFFSET, g_app.wifi_qr_payload);
 }
 
@@ -679,9 +948,9 @@ void app_main(void)
     {
         ESP_LOGE(TAG, "encoder_init failed: %s", esp_err_to_name(enc_ret));
     }
-    else if (xTaskCreate(encoder_log_task, "encoder_log", 3072, NULL, 4, &g_app.encoder_task) != pdPASS)
+    else if (xTaskCreate(encoder_ui_task, "encoder_ui", 3072, NULL, 4, &g_app.encoder_task) != pdPASS)
     {
-        ESP_LOGE(TAG, "Failed to create encoder log task");
+        ESP_LOGE(TAG, "Failed to create encoder UI task");
         g_app.encoder_task = NULL;
     }
 }
