@@ -16,12 +16,22 @@ int ina219_init(i2c_master_bus_handle_t *bus_handle, i2c_master_dev_handle_t *de
     };
     ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config, bus_handle));
 
+    return ina219_init_on_bus(*bus_handle, dev_handle, clk_speed_hz, i2c_addr);
+}
+
+int ina219_init_on_bus(i2c_master_bus_handle_t bus_handle, i2c_master_dev_handle_t *dev_handle, uint32_t clk_speed_hz, uint8_t i2c_addr)
+{
+    if (bus_handle == NULL || dev_handle == NULL)
+    {
+        return ESP_ERR_INVALID_ARG;
+    }
+
     i2c_device_config_t dev_config = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
         .device_address = i2c_addr,
         .scl_speed_hz = clk_speed_hz,
     };
-    ESP_ERROR_CHECK(i2c_master_bus_add_device(*bus_handle, &dev_config, dev_handle));
+    ESP_ERROR_CHECK(i2c_master_bus_add_device(bus_handle, &dev_config, dev_handle));
 
     return ESP_OK;
 }

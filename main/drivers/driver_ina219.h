@@ -106,6 +106,21 @@ extern "C"
     int ina219_init(i2c_master_bus_handle_t *bus_handle, i2c_master_dev_handle_t *dev_handle, i2c_port_num_t port, int sda_pin, int scl_pin, uint32_t clk_speed_hz, uint8_t i2c_addr);
 
     /**
+     * @brief Attach INA219 device to an existing I2C master bus.
+     *
+     * Use this when the application owns a shared bus and multiple devices
+     * (e.g. INA219 + OLED) must coexist.
+     *
+     * @param bus_handle Existing I2C master bus handle.
+     * @param dev_handle Output INA219 device handle.
+     * @param clk_speed_hz I2C speed for this device.
+     * @param i2c_addr 7-bit INA219 address.
+     *
+     * @return int 0 (ESP_OK) on success, or esp_err_t on failure.
+     */
+    int ina219_init_on_bus(i2c_master_bus_handle_t bus_handle, i2c_master_dev_handle_t *dev_handle, uint32_t clk_speed_hz, uint8_t i2c_addr);
+
+    /**
      * @brief Reset the INA219 device to its default register values.
      *
      * This issues the appropriate write to the device reset field so the INA219

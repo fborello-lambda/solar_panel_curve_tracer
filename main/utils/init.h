@@ -16,6 +16,21 @@
 void wifi_init_softap(void);
 
 /**
+ * @brief Get configured SoftAP SSID used during startup.
+ */
+const char *wifi_softap_ssid(void);
+
+/**
+ * @brief Get configured SoftAP password used during startup.
+ */
+const char *wifi_softap_password(void);
+
+/**
+ * @brief Return true when SoftAP auth mode is open/no password.
+ */
+bool wifi_softap_is_open(void);
+
+/**
  * @brief Initialize all system components:
  * - NVS
  * - SPIFFS

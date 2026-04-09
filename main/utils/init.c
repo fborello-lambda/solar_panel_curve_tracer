@@ -1,6 +1,9 @@
 #include "init.h"
+#include <string.h>
 
 #define DEFAULT_SSID "ESP32_PLOT"
+#define DEFAULT_PASSWORD ""
+#define DEFAULT_AUTHMODE WIFI_AUTH_OPEN
 
 static const char *TAG = "init";
 
@@ -17,14 +20,29 @@ void wifi_init_softap(void)
             .ssid = DEFAULT_SSID,
             .ssid_len = 0,
             .channel = 1,
-            .password = "",
+            .password = DEFAULT_PASSWORD,
             .max_connection = 4,
-            .authmode = WIFI_AUTH_OPEN},
+            .authmode = DEFAULT_AUTHMODE},
     };
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_AP));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &ap_config));
     ESP_ERROR_CHECK(esp_wifi_start());
     ESP_LOGI(TAG, "SoftAP started SSID:%s", ap_config.ap.ssid);
+}
+
+const char *wifi_softap_ssid(void)
+{
+    return DEFAULT_SSID;
+}
+
+const char *wifi_softap_password(void)
+{
+    return DEFAULT_PASSWORD;
+}
+
+bool wifi_softap_is_open(void)
+{
+    return DEFAULT_AUTHMODE == WIFI_AUTH_OPEN || strlen(DEFAULT_PASSWORD) == 0;
 }
 
 void system_init_all(void)

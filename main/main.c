@@ -16,65 +16,308 @@
 
 #include "pwm_controller.h"
 #include "driver_ina219.h"
+#include "driver_ssd1306.h"
+#include "driver_encoder.h"
 #include "led_controller.h"
 
 static const char *TAG = "MAIN";
 
-// TODO: Create a state struct to hold all global state variables
-// inside db.c.
-// It will be easier to manage and avoid global variables.
-// But for now, just use global variables.
-i2c_master_bus_handle_t g_bus_handle;
-i2c_master_dev_handle_t g_dev_handle;
-ina219_cal_t g_cal;
+typedef struct
+{
+    i2c_master_bus_handle_t i2c_bus;
+    i2c_master_dev_handle_t ina_dev;
+    ssd1306_t display;
+    ina219_cal_t ina_cal;
+
+    TaskHandle_t producer_task;
+    TaskHandle_t display_task;
+    TaskHandle_t encoder_task;
+    SemaphoreHandle_t state_mtx;
+
+    bool display_enabled;
+    bool measurement_running;
+    char wifi_qr_payload[128];
+} app_state_t;
+
+static app_state_t g_app = {0};
+
 #define MAX_MEASUREMENTS_PER_CYCLE 10
 uint32_t g_step_size_per_measurement = 0;
 
 // --------------------------------------------------------------------------------
 
-#define BTN_GPIO 0
-#define LED_GPIO GPIO_NUM_5
-#define DEBOUNCE_MS 100
+#define I2C_PORT I2C_NUM_0
+#define I2C_SDA_GPIO GPIO_NUM_6
+#define I2C_SCL_GPIO GPIO_NUM_7
+#define I2C_FREQ_HZ 100000
+#define WS2812_GPIO GPIO_NUM_10
+#define OLED_ROTATE_180 false
+#define OLED_COLUMN_OFFSET 2
+#define ENC_DT_GPIO GPIO_NUM_2
+#define ENC_CLK_GPIO GPIO_NUM_3
+#define ENC_SW_GPIO GPIO_NUM_4
 
-static TaskHandle_t meas_task_handle = NULL;
-static TaskHandle_t producer_task_handle = NULL;
-static SemaphoreHandle_t state_mtx = NULL;
-
-/* new shared LED state (visible across tasks) */
-static volatile bool g_led_on = false;
-
-static void measurement_set_led_locked(bool on);
+static void measurement_apply_state_locked(bool running);
 static bool measurement_start_locked(void);
 static bool measurement_stop_locked(void);
 
 bool measurement_is_running(void)
 {
-    return g_led_on;
+    return g_app.measurement_running;
 }
 
 bool measurement_request(bool start)
 {
-    if (state_mtx == NULL)
+    if (g_app.state_mtx == NULL)
     {
-        ESP_LOGW(TAG, "measurement_request_stop: state mutex not ready");
+        ESP_LOGW(TAG, "measurement_request: state mutex not ready");
         return false;
     }
 
-    bool stopped = false;
-    if (xSemaphoreTake(state_mtx, pdMS_TO_TICKS(50)) == pdTRUE)
+    bool changed = false;
+    if (xSemaphoreTake(g_app.state_mtx, pdMS_TO_TICKS(50)) == pdTRUE)
     {
-        stopped = start ? measurement_start_locked() : measurement_stop_locked();
-        xSemaphoreGive(state_mtx);
+        changed = start ? measurement_start_locked() : measurement_stop_locked();
+        xSemaphoreGive(g_app.state_mtx);
     }
     else
     {
-        ESP_LOGW(TAG, "measurement_request_stop: failed to take mutex");
+        ESP_LOGW(TAG, "measurement_request: failed to take mutex");
     }
-    return stopped;
+    return changed;
 }
 
 static void dummy_producer_task(void *arg);
 static void producer_task(void *arg);
+static void display_task(void *arg);
+static void encoder_log_task(void *arg);
+
+static void encoder_log_task(void *arg)
+{
+    (void)arg;
+
+    encoder_event_t ev;
+    for (;;)
+    {
+        if (!encoder_get_event(&ev, portMAX_DELAY))
+        {
+            continue;
+        }
+
+        if (ev.type == ENCODER_EVENT_CW)
+        {
+            ESP_LOGI(TAG, "ENCODER: CW pos=%ld t=%lu", (long)ev.position, (unsigned long)ev.timestamp_ms);
+        }
+        else if (ev.type == ENCODER_EVENT_CCW)
+        {
+            ESP_LOGI(TAG, "ENCODER: CCW pos=%ld t=%lu", (long)ev.position, (unsigned long)ev.timestamp_ms);
+        }
+        else
+        {
+            ESP_LOGI(TAG, "ENCODER: BUTTON pos=%ld t=%lu", (long)ev.position, (unsigned long)ev.timestamp_ms);
+
+            bool start = !measurement_is_running();
+            if (!measurement_request(start))
+            {
+                ESP_LOGW(TAG, "ENCODER: measurement %s request ignored", start ? "start" : "stop");
+            }
+        }
+    }
+}
+
+static esp_err_t ensure_i2c_bus_ready(void)
+{
+    if (g_app.i2c_bus != NULL)
+    {
+        return ESP_OK;
+    }
+
+    i2c_master_bus_config_t bus_config = {
+        .i2c_port = I2C_PORT,
+        .sda_io_num = I2C_SDA_GPIO,
+        .scl_io_num = I2C_SCL_GPIO,
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = false, // using external pullups on PCB
+    };
+
+    esp_err_t ret = i2c_new_master_bus(&bus_config, &g_app.i2c_bus);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "ensure_i2c_bus_ready: failed to init bus: %s", esp_err_to_name(ret));
+    }
+
+    return ret;
+}
+
+static void build_wifi_qr_payload(char *out, size_t out_size)
+{
+    const char *ssid = wifi_softap_ssid();
+    const char *password = wifi_softap_password();
+
+    if (wifi_softap_is_open())
+    {
+        snprintf(out, out_size, "WIFI:T:nopass;S:%s;;", ssid);
+    }
+    else
+    {
+        snprintf(out, out_size, "WIFI:T:WPA;S:%s;P:%s;;", ssid, password);
+    }
+}
+
+static uint32_t fnv1a32(const char *txt)
+{
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; txt && txt[i] != '\0'; i++)
+    {
+        h ^= (uint8_t)txt[i];
+        h *= 16777619u;
+    }
+    return h;
+}
+
+static bool qr_finder_at(int x, int y, int ox, int oy)
+{
+    if (x < ox || x >= ox + 7 || y < oy || y >= oy + 7)
+    {
+        return false;
+    }
+    int dx = x - ox;
+    int dy = y - oy;
+    bool border = (dx == 0 || dx == 6 || dy == 0 || dy == 6);
+    bool center = (dx >= 2 && dx <= 4 && dy >= 2 && dy <= 4);
+    return border || center;
+}
+
+static void draw_qr_placeholder(uint8_t *fb, const char *payload)
+{
+    const int modules = 21;
+    const int cell_px = 2;
+    const int qr_px = modules * cell_px;
+    const int x0 = (SSD1306_WIDTH - qr_px) / 2;
+    const int y0 = 12;
+
+    const uint32_t h = fnv1a32(payload);
+
+    ssd1306_fb_draw_rect(fb, x0 - 2, y0 - 2, qr_px + 4, qr_px + 4, true, false);
+    ssd1306_fb_draw_rect(fb, x0 - 2, y0 - 2, qr_px + 4, qr_px + 4, false, true);
+
+    for (int y = 0; y < modules; y++)
+    {
+        for (int x = 0; x < modules; x++)
+        {
+            bool on = false;
+            if (qr_finder_at(x, y, 0, 0) || qr_finder_at(x, y, modules - 7, 0) || qr_finder_at(x, y, 0, modules - 7))
+            {
+                on = true;
+            }
+            else
+            {
+                uint32_t mix = h ^ (uint32_t)(x * 0x45d9f3bu) ^ (uint32_t)(y * 0x27d4eb2du) ^ (uint32_t)((x * y + 17) * 2654435761u);
+                on = (mix & 0x1u) != 0;
+            }
+
+            if (on)
+            {
+                ssd1306_fb_draw_rect(fb, x0 + (x * cell_px), y0 + (y * cell_px), cell_px, cell_px, true, true);
+            }
+        }
+    }
+}
+
+static void render_display_frame(uint8_t *fb, uint32_t frame_idx)
+{
+    ssd1306_fb_clear(fb, false);
+
+    if ((frame_idx % 2) == 0)
+    {
+        ssd1306_fb_draw_text(fb, 0, 0, "AP QR");
+        draw_qr_placeholder(fb, g_app.wifi_qr_payload);
+        ssd1306_fb_draw_text(fb, 0, 56, "SCAN TO JOIN");
+    }
+    else
+    {
+        ssd1306_fb_draw_text(fb, 0, 0, "SOLAR TRACER");
+        ssd1306_fb_draw_text(fb, 0, 12, measurement_is_running() ? "MEAS: RUNNING" : "MEAS: IDLE");
+        ssd1306_fb_draw_text(fb, 0, 24, "AP SSID:");
+        ssd1306_fb_draw_text(fb, 0, 34, wifi_softap_ssid());
+        ssd1306_fb_draw_text(fb, 0, 46, "WEB: 192.168.4.1");
+    }
+}
+
+static void display_task(void *arg)
+{
+    (void)arg;
+
+    uint8_t fb[SSD1306_FB_SIZE];
+    uint32_t frame_idx = 0;
+
+    while (g_app.display_enabled)
+    {
+        render_display_frame(fb, frame_idx++);
+        esp_err_t ret = ssd1306_flush(&g_app.display, fb, sizeof(fb));
+        if (ret != ESP_OK)
+        {
+            ESP_LOGW(TAG, "display_task: flush failed: %s", esp_err_to_name(ret));
+        }
+        vTaskDelay(pdMS_TO_TICKS(3000));
+    }
+
+    vTaskDelete(NULL);
+}
+
+static void display_init_and_start(void)
+{
+    build_wifi_qr_payload(g_app.wifi_qr_payload, sizeof(g_app.wifi_qr_payload));
+
+    if (ensure_i2c_bus_ready() != ESP_OK)
+    {
+        ESP_LOGW(TAG, "display_init_and_start: I2C bus unavailable, skipping OLED");
+        return;
+    }
+
+    const uint8_t candidate_addrs[] = {
+        SSD1306_DEFAULT_I2C_ADDR, // standard 7-bit 0x3C
+        SSD1306_ALT_I2C_ADDR,     // alternate 7-bit 0x3D
+    };
+
+    esp_err_t ret = ESP_FAIL;
+    uint8_t selected_addr = 0;
+    for (size_t i = 0; i < sizeof(candidate_addrs) / sizeof(candidate_addrs[0]); i++)
+    {
+        ret = ssd1306_init_on_bus(&g_app.display, g_app.i2c_bus, candidate_addrs[i], 400000);
+        if (ret == ESP_OK)
+        {
+            selected_addr = candidate_addrs[i];
+            break;
+        }
+    }
+    if (ret != ESP_OK)
+    {
+        ESP_LOGW(TAG, "display_init_and_start: SSD1306 init failed at 0x%02X/0x%02X: %s",
+                 SSD1306_DEFAULT_I2C_ADDR, SSD1306_ALT_I2C_ADDR, esp_err_to_name(ret));
+        return;
+    }
+
+    ret = ssd1306_set_rotation(&g_app.display, OLED_ROTATE_180);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGW(TAG, "display_init_and_start: failed to set OLED rotation: %s", esp_err_to_name(ret));
+    }
+
+    ssd1306_set_column_offset(&g_app.display, OLED_COLUMN_OFFSET);
+
+    g_app.display_enabled = true;
+    if (xTaskCreate(display_task, "display", 4096, NULL, 4, &g_app.display_task) != pdPASS)
+    {
+        ESP_LOGE(TAG, "display_init_and_start: failed to create display task");
+        g_app.display_enabled = false;
+        return;
+    }
+
+    ESP_LOGI(TAG, "display_init_and_start: OLED started at 0x%02X (offset=%u), AP payload='%s'",
+             selected_addr, OLED_COLUMN_OFFSET, g_app.wifi_qr_payload);
+}
 
 #define DUMMY_PRODUCER
 #ifdef DUMMY_PRODUCER
@@ -83,55 +326,55 @@ static void producer_task(void *arg);
 #define PRODUCER producer_task
 #endif
 
-static void measurement_set_led_locked(bool on)
+static void measurement_apply_state_locked(bool running)
 {
-    g_led_on = on;
-    if (on)
+    g_app.measurement_running = running;
+    if (running)
     {
-        led_set_color(LED_GPIO, (led_color_t){.r = 0, .g = 20, .b = 0});
+        led_set_color(WS2812_GPIO, (led_color_t){.r = 0, .g = 20, .b = 0});
     }
     else
     {
-        led_clear(LED_GPIO);
+        led_clear(WS2812_GPIO);
     }
 }
 
 static bool measurement_start_locked(void)
 {
-    if (g_led_on)
+    if (g_app.measurement_running)
         return false;
 
     db_reset();
 
-    if (producer_task_handle == NULL)
+    if (g_app.producer_task == NULL)
     {
-        if (xTaskCreate(PRODUCER, "producer", 4096, NULL, 5, &producer_task_handle) != pdPASS)
+        if (xTaskCreate(PRODUCER, "producer", 4096, NULL, 5, &g_app.producer_task) != pdPASS)
         {
             ESP_LOGE(TAG, "measurement_start_locked: failed to create producer task");
-            producer_task_handle = NULL;
+            g_app.producer_task = NULL;
             return false;
         }
     }
 
-    measurement_set_led_locked(true);
+    measurement_apply_state_locked(true);
     ESP_LOGI(TAG, "Measurement cycle started");
     return true;
 }
 
 static bool measurement_stop_locked(void)
 {
-    if (!g_led_on)
+    if (!g_app.measurement_running)
         return false;
 
-    if (producer_task_handle)
+    if (g_app.producer_task)
     {
         db_reset();
         pwm_controller_set_duty(0);
-        vTaskDelete(producer_task_handle);
-        producer_task_handle = NULL;
+        vTaskDelete(g_app.producer_task);
+        g_app.producer_task = NULL;
     }
 
-    measurement_set_led_locked(false);
+    measurement_apply_state_locked(false);
     ESP_LOGI(TAG, "Measurement cycle stopped");
     return true;
 }
@@ -159,116 +402,6 @@ static uint32_t calculate_step_size(float max_scale_current_mA, float desired_ra
     uint32_t step = (uint32_t)(step_f + 0.5f);
 
     return step;
-}
-
-static void start_meas(void *arg)
-{
-    led_clear(LED_GPIO);
-    const TickType_t half_debounce = pdMS_TO_TICKS(DEBOUNCE_MS / 2);
-
-    for (;;)
-    {
-        // wait for ISR notification
-        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-
-        // short wait so bounce settles, then sample
-        vTaskDelay(half_debounce);
-        if (gpio_get_level(BTN_GPIO) != 0)
-            continue;
-
-        // confirm stable press
-        vTaskDelay(half_debounce);
-        if (gpio_get_level(BTN_GPIO) != 0)
-            continue;
-
-        bool was_running = false;
-        bool changed = false;
-        bool attempted = false;
-        if (xSemaphoreTake(state_mtx, pdMS_TO_TICKS(10)) == pdTRUE)
-        {
-            was_running = g_led_on;
-            changed = was_running ? measurement_stop_locked() : measurement_start_locked();
-            attempted = true;
-            xSemaphoreGive(state_mtx);
-        }
-        else
-        {
-            ESP_LOGW(TAG, "start_meas: failed to take state mutex");
-        }
-
-        if (attempted && !changed)
-        {
-            ESP_LOGW(TAG, "start_meas: %s request ignored", was_running ? "stop" : "start");
-        }
-
-        // wait until button released to avoid multiple toggles for one press
-        while (gpio_get_level(BTN_GPIO) == 0)
-        {
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
-    }
-}
-
-// ISR: notify the led task (must use task handle)
-static void IRAM_ATTR gpio_isr_handler(void *arg)
-{
-    BaseType_t woke1 = pdFALSE;
-
-    if (meas_task_handle)
-        vTaskNotifyGiveFromISR(meas_task_handle, &woke1);
-
-    // if vTaskNotifyGiveFromISR woke a higher priority task, request a context switch now
-    if (woke1)
-        portYIELD_FROM_ISR();
-}
-
-// Call this during initialization (e.g. in app_main or after wifi init)
-static void button_init_and_start_tasks(void)
-{
-    // create mutex for shared state
-    state_mtx = xSemaphoreCreateMutex();
-    if (state_mtx == NULL)
-    {
-        // handle error or log
-    }
-
-    ESP_ERROR_CHECK(led_init(LED_GPIO));
-    ESP_ERROR_CHECK(led_clear(LED_GPIO));
-
-    // start led task and keep handle
-    if (xTaskCreate(start_meas, "start_meas", 2048, NULL, 5, &meas_task_handle) != pdPASS)
-    {
-        meas_task_handle = NULL;
-        return;
-    }
-
-    // configure button GPIO (input, internal pull-up, falling edge)
-    gpio_config_t io_conf = {
-        .intr_type = GPIO_INTR_NEGEDGE,
-        .mode = GPIO_MODE_INPUT,
-        .pin_bit_mask = (1ULL << BTN_GPIO),
-        .pull_up_en = GPIO_PULLUP_ENABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE};
-    gpio_config(&io_conf);
-
-    // install ISR service and add handler
-    gpio_install_isr_service(0);
-    gpio_isr_handler_add(BTN_GPIO, gpio_isr_handler, (void *)(uintptr_t)BTN_GPIO);
-}
-
-static void blink_task(void *arg)
-{
-    const led_blink_cfg_t *cfg = (const led_blink_cfg_t *)arg;
-
-    ESP_ERROR_CHECK(led_init(cfg->gpio));
-
-    for (;;)
-    {
-        ESP_ERROR_CHECK(led_set_color(cfg->gpio, cfg->color));
-        vTaskDelay(pdMS_TO_TICKS(cfg->delay_ms));
-        ESP_ERROR_CHECK(led_clear(cfg->gpio));
-        vTaskDelay(pdMS_TO_TICKS(cfg->delay_ms));
-    }
 }
 
 // --------------------------------------------------------------------------------
@@ -328,20 +461,19 @@ static void dummy_producer_task(void *arg)
     ESP_LOGI(TAG, "dummy_producer_task: Finished data production");
 
     // clear producer handle and turn LED off (under mutex if available)
-    if (state_mtx && xSemaphoreTake(state_mtx, pdMS_TO_TICKS(10)) == pdTRUE)
+    if (g_app.state_mtx && xSemaphoreTake(g_app.state_mtx, pdMS_TO_TICKS(10)) == pdTRUE)
     {
-        producer_task_handle = NULL;
-        measurement_set_led_locked(false);
+        g_app.producer_task = NULL;
+        measurement_apply_state_locked(false);
         pwm_controller_set_duty(0);
-        xSemaphoreGive(state_mtx);
+        xSemaphoreGive(g_app.state_mtx);
     }
     else
     {
         // best-effort fallback
-        producer_task_handle = NULL;
-        g_led_on = false;
+        g_app.producer_task = NULL;
+        g_app.measurement_running = false;
         pwm_controller_set_duty(0);
-        led_clear(LED_GPIO);
     }
 
     ESP_LOGI(TAG, "dummy_producer_task: Deleting self");
@@ -387,19 +519,19 @@ static void producer_task(void *arg)
         for (int j = 0; j < MAX_MEASUREMENTS_PER_CYCLE; j++)
         {
 
-            if (ina219_get_shunt_voltage_uv(g_dev_handle, &shunt_uV) != ESP_OK)
+            if (ina219_get_shunt_voltage_uv(g_app.ina_dev, &shunt_uV) != ESP_OK)
             {
                 ESP_LOGW(TAG, "driver_ina219: shunt read failed");
             }
-            if (ina219_get_bus_voltage_mv(g_dev_handle, &bus_mV) != ESP_OK)
+            if (ina219_get_bus_voltage_mv(g_app.ina_dev, &bus_mV) != ESP_OK)
             {
                 ESP_LOGW(TAG, "driver_ina219: bus read failed");
             }
-            if (ina219_get_current_ma(g_dev_handle, &g_cal, &current_mA) != ESP_OK)
+            if (ina219_get_current_ma(g_app.ina_dev, &g_app.ina_cal, &current_mA) != ESP_OK)
             {
                 ESP_LOGW(TAG, "driver_ina219: current read failed");
             }
-            if (ina219_get_power_mw(g_dev_handle, &g_cal, &power_mW) != ESP_OK)
+            if (ina219_get_power_mw(g_app.ina_dev, &g_app.ina_cal, &power_mW) != ESP_OK)
             {
                 ESP_LOGW(TAG, "driver_ina219: power read failed");
             }
@@ -456,20 +588,19 @@ static void producer_task(void *arg)
     ESP_LOGI(TAG, "producer_task: Finished data production");
 
     // clear producer handle and turn LED off (under mutex if available)
-    if (state_mtx && xSemaphoreTake(state_mtx, pdMS_TO_TICKS(10)) == pdTRUE)
+    if (g_app.state_mtx && xSemaphoreTake(g_app.state_mtx, pdMS_TO_TICKS(10)) == pdTRUE)
     {
-        producer_task_handle = NULL;
-        measurement_set_led_locked(false);
+        g_app.producer_task = NULL;
+        measurement_apply_state_locked(false);
         pwm_controller_set_duty(0);
-        xSemaphoreGive(state_mtx);
+        xSemaphoreGive(g_app.state_mtx);
     }
     else
     {
         // best-effort fallback
-        producer_task_handle = NULL;
-        g_led_on = false;
+        g_app.producer_task = NULL;
+        g_app.measurement_running = false;
         pwm_controller_set_duty(0);
-        led_clear(LED_GPIO);
     }
 
     ESP_LOGI(TAG, "producer_task: Deleting self");
@@ -480,6 +611,13 @@ static void producer_task(void *arg)
 void app_main(void)
 {
 
+    g_app.state_mtx = xSemaphoreCreateMutex();
+    if (g_app.state_mtx == NULL)
+    {
+        ESP_LOGE(TAG, "Failed to create state mutex");
+        return;
+    }
+
     if (PRODUCER == producer_task)
     {
         int res = pwm_controller_init(NULL);
@@ -489,14 +627,21 @@ void app_main(void)
             return;
         }
 
-        res = ina219_init(&g_bus_handle, &g_dev_handle, I2C_NUM_0, 6, 7, 100000, INA219_ADDRESS_DEFAULT);
+        res = ensure_i2c_bus_ready();
         if (res != ESP_OK)
         {
-            ESP_LOGE(TAG, "ina219_init failed: %s", esp_err_to_name(res));
+            ESP_LOGE(TAG, "I2C bus init failed: %s", esp_err_to_name(res));
             return;
         }
 
-        res = ina219_calibrate_for_32V_10A(g_dev_handle, &g_cal);
+        res = ina219_init_on_bus(g_app.i2c_bus, &g_app.ina_dev, I2C_FREQ_HZ, INA219_ADDRESS_DEFAULT);
+        if (res != ESP_OK)
+        {
+            ESP_LOGE(TAG, "ina219_init_on_bus failed: %s", esp_err_to_name(res));
+            return;
+        }
+
+        res = ina219_calibrate_for_32V_10A(g_app.ina_dev, &g_app.ina_cal);
         if (res != ESP_OK)
         {
             ESP_LOGE(TAG, "ina219_calibrate_for_32V_10A failed");
@@ -504,26 +649,39 @@ void app_main(void)
         }
 
         ESP_LOGI(TAG, "driver_ina219: Calibration Done -- Current_Divider_mA=%d  Power_Multiplier_mW=%d  Current_LSB=%.6f A/bit CAL=0x%04X",
-                 g_cal.current_divider_mA, g_cal.power_multiplier_mW, g_cal.current_lsb, g_cal.cal_value);
+                 g_app.ina_cal.current_divider_mA, g_app.ina_cal.power_multiplier_mW, g_app.ina_cal.current_lsb, g_app.ina_cal.cal_value);
     }
 
     system_init_all();
 
-    static const led_blink_cfg_t cfg1 = {
-        .gpio = LED_GPIO,
-        .delay_ms = 300,
-        .color = {.r = 55, .g = 0, .b = 0},
+    if (led_init(WS2812_GPIO) == ESP_OK)
+    {
+        led_clear(WS2812_GPIO);
+    }
+    else
+    {
+        ESP_LOGW(TAG, "WS2812 init failed on GPIO %d", WS2812_GPIO);
+    }
+
+    display_init_and_start();
+
+    encoder_config_t enc_cfg = {
+        .dt_pin = ENC_DT_GPIO,
+        .clk_pin = ENC_CLK_GPIO,
+        .sw_pin = ENC_SW_GPIO,
+        .use_internal_pullups = true,
+        .sw_debounce_ms = 180,
+        .event_queue_len = 32,
     };
 
-    xTaskCreate(blink_task, "led1", 2048, (void *)&cfg1, 4, NULL);
-
-    static const led_blink_cfg_t cfg2 = {
-        .gpio = GPIO_NUM_10,
-        .delay_ms = 300,
-        .color = {.r = 0, .g = 55, .b = 55},
-    };
-
-    xTaskCreate(blink_task, "led2", 2048, (void *)&cfg2, 4, NULL);
-
-    button_init_and_start_tasks();
+    esp_err_t enc_ret = encoder_init(&enc_cfg);
+    if (enc_ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "encoder_init failed: %s", esp_err_to_name(enc_ret));
+    }
+    else if (xTaskCreate(encoder_log_task, "encoder_log", 3072, NULL, 4, &g_app.encoder_task) != pdPASS)
+    {
+        ESP_LOGE(TAG, "Failed to create encoder log task");
+        g_app.encoder_task = NULL;
+    }
 }
