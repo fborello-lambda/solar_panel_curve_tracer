@@ -1,9 +1,15 @@
-# Collect main source and all .c files under drivers, utils, server, db
-set(SRCS "main.c")
+# Collect top-level app sources and all .c files under drivers, utils, server, db
+set(SRCS
+    "main.c"
+    "measurement.c"
+    "ui.c"
+)
 file(GLOB_RECURSE LIB_SRCS  "${CMAKE_CURRENT_SOURCE_DIR}/drivers/*.c"
                             "${CMAKE_CURRENT_SOURCE_DIR}/utils/*.c"
                             "${CMAKE_CURRENT_SOURCE_DIR}/server/*.c"
-                            "${CMAKE_CURRENT_SOURCE_DIR}/db/*.c")
+                            "${CMAKE_CURRENT_SOURCE_DIR}/db/*.c"
+                            "${CMAKE_CURRENT_SOURCE_DIR}/app/*.c"
+                            )
 list(APPEND SRCS ${LIB_SRCS})
 
 # Register component with include dirs
