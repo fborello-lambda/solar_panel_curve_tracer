@@ -4,6 +4,8 @@
 #include <stdint.h>
 
 #include <driver/gpio.h>
+#include <esp_sleep.h>
+#include <esp_system.h>
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -41,6 +43,7 @@ typedef enum
 {
     HOME_SECTION_NETWORK = 0,
     HOME_SECTION_MEASURE,
+    HOME_SECTION_POWER,
     HOME_SECTION_COUNT,
 } home_section_t;
 
@@ -121,6 +124,7 @@ static void dummy_producer_task(void *arg);
 static void producer_task(void *arg);
 static void display_task(void *arg);
 static void encoder_ui_task(void *arg);
+static void enter_deep_sleep_mode(void);
 
 static int wrap_index(int value, int count)
 {
@@ -145,6 +149,7 @@ static const char *ui_home_title(int index)
     static const char *titles[HOME_SECTION_COUNT] = {
         "NETWORK",
         "MEASURE",
+        "POWER",
     };
 
     int i = wrap_index(index, HOME_SECTION_COUNT);
@@ -161,7 +166,16 @@ static const char *ui_menu_item_label(int home_index, int menu_index)
         }
         if (menu_index == 1)
         {
-            return "SHOW APP QR";
+            return "SHOW AP IP QR";
+        }
+        return "BACK";
+    }
+
+    if (home_index == HOME_SECTION_POWER)
+    {
+        if (menu_index == 0)
+        {
+            return "DEEP SLEEP";
         }
         return "BACK";
     }
@@ -181,6 +195,48 @@ static int ui_menu_item_count(int home_index)
         return 3;
     }
     return 2;
+}
+
+static void enter_deep_sleep_mode(void)
+{
+    measurement_request(false);
+    pwm_controller_set_duty(0);
+    led_clear(WS2812_GPIO);
+
+    esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+
+    esp_err_t ret = gpio_deep_sleep_wakeup_enable(ENC_SW_GPIO, GPIO_INTR_LOW_LEVEL);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "deep_sleep: gpio_deep_sleep_wakeup_enable failed: %s", esp_err_to_name(ret));
+        return;
+    }
+
+    ret = esp_deep_sleep_enable_gpio_wakeup((1ULL << ENC_SW_GPIO), ESP_GPIO_WAKEUP_GPIO_LOW);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "deep_sleep: esp_deep_sleep_enable_gpio_wakeup failed: %s", esp_err_to_name(ret));
+        return;
+    }
+
+    g_app.display_enabled = false;
+    if (g_app.display_task != NULL)
+    {
+        xTaskNotifyGive(g_app.display_task);
+    }
+
+    if (g_app.display.dev != NULL)
+    {
+        esp_err_t clear_ret = sh1106_clear(&g_app.display);
+        if (clear_ret != ESP_OK)
+        {
+            ESP_LOGW(TAG, "deep_sleep: failed to clear OLED: %s", esp_err_to_name(clear_ret));
+        }
+    }
+
+    ESP_LOGI(TAG, "Entering deep sleep. Wake source: encoder switch GPIO %d (active low)", ENC_SW_GPIO);
+    vTaskDelay(pdMS_TO_TICKS(200));
+    esp_deep_sleep_start();
 }
 
 static void display_mark_dirty(void)
@@ -247,6 +303,12 @@ static void ui_on_button(void)
         {
             g_app.ui_qr_kind = (g_app.ui_menu_index == 0) ? UI_QR_WIFI : UI_QR_AP_IP;
             ui_set_screen(UI_SCREEN_ACTION_QR);
+            return;
+        }
+
+        if (g_app.ui_home_index == HOME_SECTION_POWER)
+        {
+            enter_deep_sleep_mode();
             return;
         }
 
@@ -441,6 +503,7 @@ static void render_display_frame(uint8_t *fb)
     {
         char home0[24] = {0};
         char home1[24] = {0};
+        char home2[24] = {0};
 
         snprintf(home0, sizeof(home0), "%s %s",
                  g_app.ui_home_index == HOME_SECTION_NETWORK ? ">>" : "  ",
@@ -448,10 +511,14 @@ static void render_display_frame(uint8_t *fb)
         snprintf(home1, sizeof(home1), "%s %s",
                  g_app.ui_home_index == HOME_SECTION_MEASURE ? ">>" : "  ",
                  ui_home_title(HOME_SECTION_MEASURE));
+        snprintf(home2, sizeof(home2), "%s %s",
+                 g_app.ui_home_index == HOME_SECTION_POWER ? ">>" : "  ",
+                 ui_home_title(HOME_SECTION_POWER));
 
         sh1106_fb_draw_text(fb, 0, 0, "HOME");
-        sh1106_fb_draw_text(fb, 0, 20, home0);
-        sh1106_fb_draw_text(fb, 0, 34, home1);
+        sh1106_fb_draw_text(fb, 0, 14, home0);
+        sh1106_fb_draw_text(fb, 0, 28, home1);
+        sh1106_fb_draw_text(fb, 0, 42, home2);
         sh1106_fb_draw_text(fb, 0, 56, "L/R MOVE BTN OK");
         return;
     }
@@ -879,6 +946,14 @@ static void producer_task(void *arg)
 
 void app_main(void)
 {
+    esp_sleep_wakeup_cause_t wakeup_cause = esp_sleep_get_wakeup_cause();
+    if (wakeup_cause == ESP_SLEEP_WAKEUP_GPIO)
+    {
+        ESP_LOGI(TAG, "Wakeup cause: GPIO (encoder switch)");
+        // Force a clean boot path so UI/tasks/peripherals always start from scratch.
+        esp_restart();
+    }
+
 
     g_app.state_mtx = xSemaphoreCreateMutex();
     if (g_app.state_mtx == NULL)
