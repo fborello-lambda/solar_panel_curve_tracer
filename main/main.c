@@ -31,6 +31,7 @@ typedef enum
     UI_SCREEN_MENU,
     UI_SCREEN_ACTION_QR,
     UI_SCREEN_ACTION_MEASURE,
+    UI_SCREEN_ACTION_DYNAMIC_LOAD,
 } ui_screen_t;
 
 typedef enum
@@ -61,6 +62,8 @@ typedef struct
 
     bool display_enabled;
     bool measurement_running;
+    bool pwm_ready;
+    bool ina_ready;
     char wifi_qr_payload[128];
     uint8_t qr_frame[SH1106_FB_SIZE];
     bool qr_frame_valid;
@@ -68,6 +71,17 @@ typedef struct
     ui_qr_kind_t ui_qr_kind;
     int ui_home_index;
     int ui_menu_index;
+    int ui_measure_index;
+    bool dynamic_load_active;
+    float dynamic_measured_mA;
+    float dynamic_power_mW;
+    int32_t dynamic_bus_mv;
+    int32_t dynamic_shunt_uv;
+    bool dynamic_measured_valid;
+    bool dynamic_power_limited;
+    uint32_t dynamic_duty_steps;
+    TickType_t dynamic_last_adjust_tick;
+    TickType_t dynamic_last_sample_tick;
     bool display_dirty;
 } app_state_t;
 
@@ -89,10 +103,23 @@ uint32_t g_step_size_per_measurement = 0;
 #define ENC_DT_GPIO GPIO_NUM_2
 #define ENC_CLK_GPIO GPIO_NUM_3
 #define ENC_SW_GPIO GPIO_NUM_4
+#define DYNAMIC_LOAD_DUTY_STEP 96
+#define DYNAMIC_LOAD_DUTY_MAX_PERCENT 10
+#define DYNAMIC_LOAD_SAMPLE_COUNT 8
+#define DYNAMIC_LOAD_UPDATE_MS 120
+#define DYNAMIC_LOAD_SETTLE_MS 80
+#define LOAD_POWER_LIMIT_MW 2000.0f
+#define LOAD_POWER_NEAR_MARGIN_MW 150.0f
 
 static void measurement_apply_state_locked(bool running);
 static bool measurement_start_locked(void);
 static bool measurement_stop_locked(void);
+static bool init_load_control_hw(bool strict_mode);
+static void dynamic_load_set_duty(uint32_t duty_steps);
+static void dynamic_load_adjust(int dir);
+static void dynamic_load_update_measured(void);
+static void dynamic_load_enter(void);
+static void dynamic_load_exit(void);
 
 bool measurement_is_running(void)
 {
@@ -180,6 +207,19 @@ static const char *ui_menu_item_label(int home_index, int menu_index)
         return "BACK";
     }
 
+    if (home_index == HOME_SECTION_MEASURE)
+    {
+        if (menu_index == 0)
+        {
+            return "CURVE TRACER";
+        }
+        if (menu_index == 1)
+        {
+            return "DYNAMIC LOAD";
+        }
+        return "BACK";
+    }
+
     if (menu_index == 1)
     {
         return "BACK";
@@ -191,6 +231,10 @@ static const char *ui_menu_item_label(int home_index, int menu_index)
 static int ui_menu_item_count(int home_index)
 {
     if (home_index == HOME_SECTION_NETWORK)
+    {
+        return 3;
+    }
+    if (home_index == HOME_SECTION_MEASURE)
     {
         return 3;
     }
@@ -260,6 +304,18 @@ static void ui_init_state(void)
     g_app.ui_qr_kind = UI_QR_WIFI;
     g_app.ui_home_index = HOME_SECTION_NETWORK;
     g_app.ui_menu_index = 0;
+    g_app.ui_measure_index = 0;
+    g_app.dynamic_load_active = false;
+    g_app.dynamic_duty_steps = 0;
+    g_app.dynamic_measured_mA = 0.0f;
+    g_app.dynamic_power_mW = 0.0f;
+    g_app.dynamic_bus_mv = 0;
+    g_app.dynamic_shunt_uv = 0;
+    g_app.dynamic_measured_valid = false;
+    g_app.dynamic_power_limited = false;
+    g_app.dynamic_duty_steps = 0;
+    g_app.dynamic_last_adjust_tick = 0;
+    g_app.dynamic_last_sample_tick = 0;
     display_mark_dirty();
 }
 
@@ -275,6 +331,20 @@ static void ui_on_rotate(int dir)
     if (g_app.ui_screen == UI_SCREEN_MENU)
     {
         g_app.ui_menu_index = wrap_index(g_app.ui_menu_index + dir, ui_menu_item_count(g_app.ui_home_index));
+        display_mark_dirty();
+        return;
+    }
+
+    if (g_app.ui_screen == UI_SCREEN_ACTION_MEASURE)
+    {
+        g_app.ui_measure_index = wrap_index(g_app.ui_measure_index + dir, 2);
+        display_mark_dirty();
+        return;
+    }
+
+    if (g_app.ui_screen == UI_SCREEN_ACTION_DYNAMIC_LOAD)
+    {
+        dynamic_load_adjust(dir);
         display_mark_dirty();
     }
 }
@@ -312,19 +382,231 @@ static void ui_on_button(void)
             return;
         }
 
+        if (g_app.ui_home_index == HOME_SECTION_MEASURE && g_app.ui_menu_index == 1)
+        {
+            measurement_request(false);
+            dynamic_load_enter();
+            ui_set_screen(UI_SCREEN_ACTION_DYNAMIC_LOAD);
+            return;
+        }
+
+        if (g_app.ui_home_index == HOME_SECTION_MEASURE && g_app.ui_menu_index == 0)
+        {
+            g_app.ui_measure_index = 0;
+            ui_set_screen(UI_SCREEN_ACTION_MEASURE);
+            return;
+        }
+
         bool start = !measurement_is_running();
         if (!measurement_request(start))
         {
             ESP_LOGW(TAG, "UI: measurement %s request ignored", start ? "start" : "stop");
         }
-        ui_set_screen(UI_SCREEN_ACTION_MEASURE);
+        display_mark_dirty();
         return;
     }
 
-    if (g_app.ui_screen == UI_SCREEN_ACTION_QR || g_app.ui_screen == UI_SCREEN_ACTION_MEASURE)
+    if (g_app.ui_screen == UI_SCREEN_ACTION_QR)
     {
         ui_set_screen(UI_SCREEN_MENU);
+        return;
     }
+
+    if (g_app.ui_screen == UI_SCREEN_ACTION_MEASURE)
+    {
+        if (g_app.ui_measure_index == 0)
+        {
+            bool start = !measurement_is_running();
+            if (start)
+            {
+                dynamic_load_exit();
+            }
+
+            if (!measurement_request(start))
+            {
+                ESP_LOGW(TAG, "UI: measurement %s request ignored", start ? "start" : "stop");
+            }
+            display_mark_dirty();
+        }
+        else
+        {
+            ui_set_screen(UI_SCREEN_MENU);
+        }
+        return;
+    }
+
+    if (g_app.ui_screen == UI_SCREEN_ACTION_DYNAMIC_LOAD)
+    {
+        dynamic_load_exit();
+        ui_set_screen(UI_SCREEN_MENU);
+    }
+}
+
+static void dynamic_load_set_duty(uint32_t duty_steps)
+{
+    if (!g_app.pwm_ready)
+    {
+        g_app.dynamic_duty_steps = 0;
+        g_app.dynamic_last_adjust_tick = xTaskGetTickCount();
+        return;
+    }
+
+    uint32_t pwm_res = 0;
+    if (pwm_controller_get_resolution(&pwm_res) != 0 || pwm_res == 0)
+    {
+        ESP_LOGW(TAG, "dynamic_load: failed to read PWM resolution");
+        return;
+    }
+
+    uint32_t max_duty = (uint32_t)((DYNAMIC_LOAD_DUTY_MAX_PERCENT / 100.0f) * (float)pwm_res);
+    if (duty_steps > max_duty)
+        duty_steps = max_duty;
+
+    if (pwm_controller_set_duty_in_res_steps(duty_steps) != 0)
+    {
+        ESP_LOGW(TAG, "dynamic_load: failed to apply PWM duty=%lu", (unsigned long)duty_steps);
+        return;
+    }
+
+    g_app.dynamic_duty_steps = duty_steps;
+    g_app.dynamic_last_adjust_tick = xTaskGetTickCount();
+}
+
+static void dynamic_load_adjust(int dir)
+{
+    if (!g_app.pwm_ready)
+        return;
+
+    if (dir > 0 && g_app.dynamic_measured_valid)
+    {
+        float near_limit_mW = LOAD_POWER_LIMIT_MW - LOAD_POWER_NEAR_MARGIN_MW;
+        if (g_app.dynamic_power_mW >= near_limit_mW)
+        {
+            g_app.dynamic_power_limited = true;
+            ESP_LOGW(TAG, "dynamic_load: power near limit (%.0f mW), blocking duty increase", g_app.dynamic_power_mW);
+            return;
+        }
+    }
+    if (dir < 0)
+    {
+        g_app.dynamic_power_limited = false;
+    }
+
+    int32_t new_duty = (int32_t)g_app.dynamic_duty_steps + (dir * DYNAMIC_LOAD_DUTY_STEP);
+    if (new_duty < 0)
+        new_duty = 0;
+
+    dynamic_load_set_duty((uint32_t)new_duty);
+}
+
+static void dynamic_load_update_measured(void)
+{
+    if (!g_app.ina_ready)
+    {
+        g_app.dynamic_measured_valid = false;
+        return;
+    }
+
+    TickType_t now = xTaskGetTickCount();
+    if ((now - g_app.dynamic_last_sample_tick) < pdMS_TO_TICKS(DYNAMIC_LOAD_UPDATE_MS))
+    {
+        return;
+    }
+
+    if ((now - g_app.dynamic_last_adjust_tick) < pdMS_TO_TICKS(DYNAMIC_LOAD_SETTLE_MS))
+    {
+        return;
+    }
+
+    g_app.dynamic_last_sample_tick = now;
+
+    int32_t sum_mA = 0;
+    int32_t sum_bus_mv = 0;
+    int32_t sum_shunt_uv = 0;
+    int valid = 0;
+    for (int n = 0; n < DYNAMIC_LOAD_SAMPLE_COUNT; n++)
+    {
+        int32_t raw_mA = 0, bus_mv = 0, shunt_uv = 0;
+        bool ok = ina219_get_current_ma(g_app.ina_dev, &g_app.ina_cal, &raw_mA) == ESP_OK;
+        ok &= ina219_get_bus_voltage_mv(g_app.ina_dev, &bus_mv) == ESP_OK;
+        ok &= ina219_get_shunt_voltage_uv(g_app.ina_dev, &shunt_uv) == ESP_OK;
+        if (ok)
+        {
+            sum_mA += raw_mA;
+            sum_bus_mv += bus_mv;
+            sum_shunt_uv += shunt_uv;
+            valid++;
+        }
+        vTaskDelay(pdMS_TO_TICKS(2));
+    }
+
+    if (valid > 0)
+    {
+        float avg_signed_mA = (float)sum_mA / (float)valid;
+        float avg_mA = fabsf(avg_signed_mA);
+        float avg_bus_mV = (float)sum_bus_mv / (float)valid;
+
+        g_app.dynamic_measured_mA = (avg_mA < 3.0f) ? 0.0f : avg_mA;
+        g_app.dynamic_bus_mv = sum_bus_mv / valid;
+        g_app.dynamic_shunt_uv = sum_shunt_uv / valid;
+        g_app.dynamic_power_mW = (g_app.dynamic_measured_mA * avg_bus_mV) / 1000.0f;
+        g_app.dynamic_measured_valid = true;
+
+        if (g_app.dynamic_power_mW >= LOAD_POWER_LIMIT_MW)
+        {
+            g_app.dynamic_power_limited = true;
+            if (g_app.dynamic_duty_steps > 0)
+            {
+                uint32_t reduced_duty = (g_app.dynamic_duty_steps > DYNAMIC_LOAD_DUTY_STEP)
+                                          ? (g_app.dynamic_duty_steps - DYNAMIC_LOAD_DUTY_STEP)
+                                          : 0;
+                ESP_LOGW(TAG, "dynamic_load: power limit reached (%.0f mW), backing off duty %lu -> %lu",
+                         g_app.dynamic_power_mW,
+                         (unsigned long)g_app.dynamic_duty_steps,
+                         (unsigned long)reduced_duty);
+                dynamic_load_set_duty(reduced_duty);
+            }
+        }
+        else if (g_app.dynamic_power_mW < (LOAD_POWER_LIMIT_MW - LOAD_POWER_NEAR_MARGIN_MW))
+        {
+            g_app.dynamic_power_limited = false;
+        }
+    }
+    else
+    {
+        g_app.dynamic_measured_valid = false;
+        g_app.dynamic_power_mW = 0.0f;
+    }
+}
+
+static void dynamic_load_enter(void)
+{
+    g_app.dynamic_load_active = true;
+    g_app.dynamic_power_limited = false;
+    g_app.dynamic_power_mW = 0.0f;
+    g_app.dynamic_last_adjust_tick = xTaskGetTickCount();
+    g_app.dynamic_last_sample_tick = 0;
+
+    dynamic_load_set_duty(0);
+    dynamic_load_update_measured();
+    display_mark_dirty();
+}
+
+static void dynamic_load_exit(void)
+{
+    g_app.dynamic_load_active = false;
+    g_app.dynamic_measured_valid = false;
+    g_app.dynamic_measured_mA = 0.0f;
+    g_app.dynamic_power_mW = 0.0f;
+    g_app.dynamic_bus_mv = 0;
+    g_app.dynamic_shunt_uv = 0;
+    g_app.dynamic_power_limited = false;
+    g_app.dynamic_duty_steps = 0;
+    if (g_app.pwm_ready)
+    {
+        pwm_controller_set_duty(0);
+    }
+    display_mark_dirty();
 }
 
 static void encoder_ui_task(void *arg)
@@ -515,11 +797,10 @@ static void render_display_frame(uint8_t *fb)
                  g_app.ui_home_index == HOME_SECTION_POWER ? ">>" : "  ",
                  ui_home_title(HOME_SECTION_POWER));
 
-        sh1106_fb_draw_text(fb, 0, 0, "HOME");
-        sh1106_fb_draw_text(fb, 0, 14, home0);
-        sh1106_fb_draw_text(fb, 0, 28, home1);
-        sh1106_fb_draw_text(fb, 0, 42, home2);
-        sh1106_fb_draw_text(fb, 0, 56, "L/R MOVE BTN OK");
+        sh1106_fb_draw_text(fb, 0, 8, "HOME");
+        sh1106_fb_draw_text(fb, 0, 22, home0);
+        sh1106_fb_draw_text(fb, 0, 36, home1);
+        sh1106_fb_draw_text(fb, 0, 50, home2);
         return;
     }
 
@@ -543,15 +824,14 @@ static void render_display_frame(uint8_t *fb)
                      ui_menu_item_label(g_app.ui_home_index, 2));
         }
 
-        sh1106_fb_draw_text(fb, 0, 0, "MENU");
-        sh1106_fb_draw_text(fb, 0, 10, ui_home_title(g_app.ui_home_index));
-        sh1106_fb_draw_text(fb, 0, 22, line0);
-        sh1106_fb_draw_text(fb, 0, 34, line1);
+        sh1106_fb_draw_text(fb, 0, 8, "MENU");
+        sh1106_fb_draw_text(fb, 0, 18, ui_home_title(g_app.ui_home_index));
+        sh1106_fb_draw_text(fb, 0, 30, line0);
+        sh1106_fb_draw_text(fb, 0, 42, line1);
         if (item_count > 2)
         {
-            sh1106_fb_draw_text(fb, 0, 46, line2);
+            sh1106_fb_draw_text(fb, 0, 54, line2);
         }
-        sh1106_fb_draw_text(fb, 0, 56, "L/R MOVE BTN OK");
         return;
     }
 
@@ -562,11 +842,71 @@ static void render_display_frame(uint8_t *fb)
         return;
     }
 
-    sh1106_fb_draw_text(fb, 0, 0, "MEASURE");
-    sh1106_fb_draw_text(fb, 0, 18, measurement_is_running() ? "STATE: RUNNING" : "STATE: STOPPED");
-    sh1106_fb_draw_text(fb, 0, 34, "BTN BACK");
-    sh1106_fb_draw_text(fb, 0, 48, "USE MENU TO");
-    sh1106_fb_draw_text(fb, 0, 56, "START OR STOP");
+    if (g_app.ui_screen == UI_SCREEN_ACTION_DYNAMIC_LOAD)
+    {
+        char set_line[24] = {0};
+        char current_line[24] = {0};
+        char power_line[24] = {0};
+        char vbus_line[24] = {0};
+        char status_line[24] = {0};
+
+        uint32_t pwm_res_disp = 0;
+        pwm_controller_get_resolution(&pwm_res_disp);
+        float duty_pct = (pwm_res_disp > 0) ? ((float)g_app.dynamic_duty_steps * 100.0f / (float)pwm_res_disp) : 0.0f;
+        snprintf(set_line, sizeof(set_line), "PWM : %.2f %%", duty_pct);
+        if (g_app.dynamic_measured_valid)
+        {
+            snprintf(current_line, sizeof(current_line), "I   : %.1f MA", g_app.dynamic_measured_mA);
+            snprintf(power_line, sizeof(power_line), "PWR : %.0f MW", g_app.dynamic_power_mW);
+            snprintf(vbus_line, sizeof(vbus_line), "VBUS: %ld MV", (long)g_app.dynamic_bus_mv);
+        }
+        else
+        {
+            snprintf(current_line, sizeof(current_line), "I   : N/A");
+            snprintf(power_line, sizeof(power_line), "PWR : N/A");
+            snprintf(vbus_line, sizeof(vbus_line), "VBUS: N/A");
+        }
+
+        if (g_app.dynamic_power_limited)
+        {
+            snprintf(status_line, sizeof(status_line), "LIMIT: HOLD <=2W");
+        }
+        else
+        {
+            snprintf(status_line, sizeof(status_line), "PWM : %lu", (unsigned long)g_app.dynamic_duty_steps);
+        }
+
+        sh1106_fb_draw_text(fb, 0, 8, "DYNAMIC LOAD");
+        sh1106_fb_draw_text(fb, 0, 18, set_line);
+        sh1106_fb_draw_text(fb, 0, 28, current_line);
+        sh1106_fb_draw_text(fb, 0, 38, power_line);
+        sh1106_fb_draw_text(fb, 0, 48, vbus_line);
+        sh1106_fb_draw_text(fb, 0, 56, status_line);
+        return;
+    }
+
+    if (g_app.ui_screen == UI_SCREEN_ACTION_MEASURE)
+    {
+        char action_line[24] = {0};
+        char back_line[24] = {0};
+
+        snprintf(action_line, sizeof(action_line), "%s %s",
+                 g_app.ui_measure_index == 0 ? ">>" : "  ",
+                 measurement_is_running() ? "STOP TRACE" : "START TRACE");
+        snprintf(back_line, sizeof(back_line), "%s BACK",
+                 g_app.ui_measure_index == 1 ? ">>" : "  ");
+
+        sh1106_fb_draw_text(fb, 0, 8, "CURVE TRACER");
+        sh1106_fb_draw_text(fb, 0, 22, measurement_is_running() ? "STATE: RUNNING" : "STATE: STOPPED");
+        sh1106_fb_draw_text(fb, 0, 38, action_line);
+        sh1106_fb_draw_text(fb, 0, 52, back_line);
+        return;
+    }
+
+    sh1106_fb_draw_text(fb, 0, 8, "MEASURE");
+    sh1106_fb_draw_text(fb, 0, 24, measurement_is_running() ? "STATE: RUNNING" : "STATE: STOPPED");
+    sh1106_fb_draw_text(fb, 0, 40, "BTN BACK");
+    sh1106_fb_draw_text(fb, 0, 52, "USE MENU START/STOP");
 }
 
 static void display_task(void *arg)
@@ -576,6 +916,18 @@ static void display_task(void *arg)
     while (g_app.display_enabled)
     {
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(250));
+
+        if (g_app.ui_screen == UI_SCREEN_ACTION_MEASURE)
+        {
+            // Keep START/STOP state fresh even when producer changes state asynchronously.
+            g_app.display_dirty = true;
+        }
+
+        if (g_app.ui_screen == UI_SCREEN_ACTION_DYNAMIC_LOAD)
+        {
+            dynamic_load_update_measured();
+            g_app.display_dirty = true;
+        }
 
         if (!g_app.display_dirty)
         {
@@ -715,6 +1067,47 @@ static bool measurement_stop_locked(void)
     return true;
 }
 
+static bool init_load_control_hw(bool strict_mode)
+{
+    g_app.pwm_ready = false;
+    g_app.ina_ready = false;
+
+    int pwm_ret = pwm_controller_init(NULL);
+    if (pwm_ret != 0)
+    {
+        ESP_LOGE(TAG, "pwm_controller_init failed: %d", pwm_ret);
+        return !strict_mode;
+    }
+    g_app.pwm_ready = true;
+
+    esp_err_t ret = ensure_i2c_bus_ready();
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "I2C bus init failed: %s", esp_err_to_name(ret));
+        return !strict_mode;
+    }
+
+    ret = ina219_init_on_bus(g_app.i2c_bus, &g_app.ina_dev, I2C_FREQ_HZ, INA219_ADDRESS_DEFAULT);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "ina219_init_on_bus failed: %s", esp_err_to_name(ret));
+        return !strict_mode;
+    }
+
+    ret = ina219_calibrate_for_32V_10A(g_app.ina_dev, &g_app.ina_cal);
+    if (ret != ESP_OK)
+    {
+        ESP_LOGE(TAG, "ina219_calibrate_for_32V_10A failed");
+        return !strict_mode;
+    }
+
+    ESP_LOGI(TAG, "driver_ina219: Calibration Done -- Current_Divider_mA=%d  Power_Multiplier_mW=%d  Current_LSB=%.6f A/bit CAL=0x%04X",
+             g_app.ina_cal.current_divider_mA, g_app.ina_cal.power_multiplier_mW, g_app.ina_cal.current_lsb, g_app.ina_cal.cal_value);
+    g_app.ina_ready = true;
+
+    return true;
+}
+
 // --------------------------------------------------------------------------------
 // The max_scale_current_mA is the maximum current the system can provide.
 // It's determined in the notebook analysis and is a constant. It depends on various factors
@@ -727,7 +1120,7 @@ static uint32_t calculate_step_size(float max_scale_current_mA, float desired_ra
 
     // Calculate step size to reach max_current_mA in given number of measurements
     // Use integer math to avoid floating point in this simple calculation
-    float step_f = ((float)pwm_resolution * desired_range_mA) / (max_scale_current_mA * (float)number_of_measurements);
+    float step_f = ((float)pwm_resolution * desired_range_mA) / (max_scale_current_mA * (float)(number_of_measurements - 1));
 
     ESP_LOGI(TAG, "calculate_step_size: max_scale_current_mA=%.3f desired_range_mA=%.3f number_of_measurements=%d pwm_resolution=%d => step_f=%.3f",
              max_scale_current_mA, desired_range_mA, number_of_measurements, pwm_resolution, step_f);
@@ -879,6 +1272,10 @@ static void producer_task(void *arg)
         }
 
         // Simple averaging
+        shunt_uV = 0;
+        bus_mV = 0;
+        current_mA = 0;
+        power_mW = 0;
         for (int k = 0; k < MAX_MEASUREMENTS_PER_CYCLE; k++)
         {
             shunt_uV += shunt_uV_array[k];
@@ -893,6 +1290,15 @@ static void producer_task(void *arg)
 
         ESP_LOGI(TAG, "VBUS=%d mV  VSHUNT=%d uV  I=%d mA  P=%d mW",
                  bus_mV, shunt_uV, current_mA, power_mW);
+
+        int32_t abs_power_mW = (power_mW < 0) ? -power_mW : power_mW;
+        float near_limit_mW = LOAD_POWER_LIMIT_MW - LOAD_POWER_NEAR_MARGIN_MW;
+        if ((float)abs_power_mW >= near_limit_mW)
+        {
+            ESP_LOGW(TAG, "producer_task: power near limit (%ld mW), stopping sweep to protect load",
+                     (long)abs_power_mW);
+            break;
+        }
 
         /*
         Compute voltage across the load
@@ -915,8 +1321,9 @@ static void producer_task(void *arg)
 
         ESP_LOGI(TAG, "producer_task: db_add succeeded (v=%.3f,i=%.3f) || attempts=%d", v, i, attempts);
 
-        // Should not happen, but wrap around just in case.
-        duty = (duty + stepsize) % pwm_res;
+        duty += stepsize;
+        if (duty > pwm_res)
+            duty = pwm_res;
         pwm_controller_set_duty_in_res_steps(duty);
         vTaskDelay(pdMS_TO_TICKS(250));
     }
@@ -962,38 +1369,9 @@ void app_main(void)
         return;
     }
 
-    if (PRODUCER == producer_task)
+    if (!init_load_control_hw(PRODUCER == producer_task))
     {
-        int res = pwm_controller_init(NULL);
-        if (res != 0)
-        {
-            ESP_LOGE(TAG, "pwm_controller_init failed: %d", res);
-            return;
-        }
-
-        res = ensure_i2c_bus_ready();
-        if (res != ESP_OK)
-        {
-            ESP_LOGE(TAG, "I2C bus init failed: %s", esp_err_to_name(res));
-            return;
-        }
-
-        res = ina219_init_on_bus(g_app.i2c_bus, &g_app.ina_dev, I2C_FREQ_HZ, INA219_ADDRESS_DEFAULT);
-        if (res != ESP_OK)
-        {
-            ESP_LOGE(TAG, "ina219_init_on_bus failed: %s", esp_err_to_name(res));
-            return;
-        }
-
-        res = ina219_calibrate_for_32V_10A(g_app.ina_dev, &g_app.ina_cal);
-        if (res != ESP_OK)
-        {
-            ESP_LOGE(TAG, "ina219_calibrate_for_32V_10A failed");
-            return;
-        }
-
-        ESP_LOGI(TAG, "driver_ina219: Calibration Done -- Current_Divider_mA=%d  Power_Multiplier_mW=%d  Current_LSB=%.6f A/bit CAL=0x%04X",
-                 g_app.ina_cal.current_divider_mA, g_app.ina_cal.power_multiplier_mW, g_app.ina_cal.current_lsb, g_app.ina_cal.cal_value);
+        return;
     }
 
     system_init_all();
