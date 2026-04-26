@@ -23,6 +23,38 @@ By doing this, the ESP-IDF extension will use the correct toolchain and settings
 
 To connect to the ESP32-C3's Wi-Fi network, the default SSID is `"ESP32_PLOT"` with no password. Then navigate to `http://192.168.4.1` in a web browser and the web interface should load. The `/data` endpoint is used to fetch the data for the chart, it returns a JSON object with the voltage and current data as a list of x,y points.
 
+### Flashing
+
+Because Secure Boot is enabled, the standard ESP-IDF flash button will fail when writing the SPIFFS partition. Use the provided script instead:
+
+```sh
+./secure_boot_flash.sh
+```
+
+This builds the project and flashes all binaries in the correct order, working around the Secure Download Mode limitation on large partition erases.
+
+### OTA Updates
+
+If the device is already running and connected to Wi-Fi, firmware and storage can be updated over the air without a USB connection:
+
+1. Download the latest `app.bin` and `storage.bin` from the GitHub releases (or build them locally).
+2. Navigate to `http://<device-ip>/ota` in a browser.
+3. Under **App firmware**, select `app.bin` and click **Upload and Flash**.
+4. Once the device reboots, go back to `/ota`.
+5. Under **Storage / SPIFFS**, select `storage.bin` and click **Upload Storage**.
+
+The device reboots automatically after each upload.
+
+>[!NOTE] I'm experimenting with SECURE_BOOT
+> Right now some boards may have *.pem file applied.
+
+`SECURE_BOOT` is enabled on the test device. The signing key `secure_boot_signing_key.pem` is committed to the repo for convenience since this is a experimental project with no secrets to protect.
+
+> [!WARNING]
+> Committing the signing key is only acceptable here because Secure Boot is used for experimentation, not security. In any real deployment, **never commit the key** — if an attacker obtains it they can sign and flash arbitrary firmware. For production, store it offline in a password manager or encrypted storage.
+>
+> Additionally, once Secure Boot is burned into a device's eFuses it cannot be disabled. If the key is ever lost, the device can never be updated again and is permanently bricked. See [LESSONS.md](LESSONS.md) for the full story.
+
 ## What
 
 The Circuit is based on an ESP32-C3 microcontroller, INA219 current sensor, and an op-amp based voltage controlled current source (VCCS) to load the solar panel. The ESP32-C3 reads the voltage and current from the solar panel using the INA219 sensor, and adjusts the load using PWM to control the VCCS. The data is then sent to a web server hosted on the ESP32-C3, where it can be visualized in real-time.

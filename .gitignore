@@ -1,6 +1,9 @@
 build/
+log/
 sdkconfig
 sdkconfig.old
 
 /venv
 .vscode/settings.json
+
+managed_components/
