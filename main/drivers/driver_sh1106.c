@@ -75,18 +75,27 @@ esp_err_t sh1106_init_on_bus(sh1106_t *display, i2c_master_bus_handle_t bus, uin
 
     const uint8_t init_cmds[] = {
         0xAE,
-        0xD5, 0x80,
-        0xA8, 0x3F,
-        0xD3, 0x00,
+        0xD5,
+        0x80,
+        0xA8,
+        0x3F,
+        0xD3,
+        0x00,
         0x40,
-        0x8D, 0x14,
-        0x20, 0x00,
+        0x8D,
+        0x14,
+        0x20,
+        0x00,
         0xA1,
         0xC8,
-        0xDA, 0x12,
-        0x81, 0x7F,
-        0xD9, 0xF1,
-        0xDB, 0x40,
+        0xDA,
+        0x12,
+        0x81,
+        0x7F,
+        0xD9,
+        0xF1,
+        0xDB,
+        0x40,
         0xA4,
         0xA6,
         0x2E,
@@ -217,6 +226,12 @@ void sh1106_fb_draw_rect(uint8_t *fb, int x, int y, int w, int h, bool fill, boo
 
 static bool glyph_for_char(char c, uint8_t out[5])
 {
+    if (c == 'm')
+    {
+        memcpy(out, (uint8_t[]){0x7C, 0x04, 0x18, 0x04, 0x78}, 5);
+        return true;
+    }
+
     const char uc = (char)toupper((unsigned char)c);
     switch (uc)
     {
@@ -348,6 +363,12 @@ static bool glyph_for_char(char c, uint8_t out[5])
         return true;
     case '>':
         memcpy(out, (uint8_t[]){0x00, 0x22, 0x14, 0x08, 0x00}, 5);
+        return true;
+    case '%':
+        memcpy(out, (uint8_t[]){0x13, 0x0B, 0x04, 0x1A, 0x19}, 5);
+        return true;
+    case '|':
+        memcpy(out, (uint8_t[]){0x00, 0x00, 0x7F, 0x00, 0x00}, 5);
         return true;
     default:
         memcpy(out, (uint8_t[]){0x7F, 0x41, 0x41, 0x41, 0x7F}, 5);
