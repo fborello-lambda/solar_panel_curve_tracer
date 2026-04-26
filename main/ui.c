@@ -1,5 +1,6 @@
 #include "ui.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -554,7 +555,7 @@ void ui_render_display_frame(uint8_t *fb)
 
     if (g_app.ui_screen == UI_SCREEN_ACTION_DYNAMIC_LOAD)
     {
-        char set_line[24] = {0};
+        char load_bar[24] = {0};
         char current_line[24] = {0};
         char power_line[24] = {0};
         char vbus_line[24] = {0};
@@ -563,13 +564,22 @@ void ui_render_display_frame(uint8_t *fb)
         uint32_t pwm_res_disp = 0;
         pwm_controller_get_resolution(&pwm_res_disp);
         float duty_pct = (pwm_res_disp > 0) ? ((float)g_app.dynamic_duty_steps * 100.0f / (float)pwm_res_disp) : 0.0f;
-        snprintf(set_line, sizeof(set_line), "PWM : %.2f %%", duty_pct);
+
+        // Build load bar scaled to DYNAMIC_LOAD_DUTY_MAX_PERCENT
+        float duty_rel = (DYNAMIC_LOAD_DUTY_MAX_PERCENT > 0) ? (duty_pct / DYNAMIC_LOAD_DUTY_MAX_PERCENT) : 0.0f;
+        int filled = (int)roundf(duty_rel * 8.0f);
+        if (filled > 8) filled = 8;
+        char bar[9] = {0};
+        for (int i = 0; i < 8; i++)
+            bar[i] = (i < filled) ? '>' : '.';
+        int duty_int = (int)roundf(duty_pct);
+        snprintf(load_bar, sizeof(load_bar), "|%s| %d/%d%%", bar, duty_int, DYNAMIC_LOAD_DUTY_MAX_PERCENT);
 
         if (g_app.dynamic_measured_valid)
         {
-            snprintf(current_line, sizeof(current_line), "I   : %.1f MA", g_app.dynamic_measured_mA);
-            snprintf(power_line, sizeof(power_line), "PWR : %.0f MW", g_app.dynamic_power_mW);
-            snprintf(vbus_line, sizeof(vbus_line), "VBUS: %ld MV", (long)g_app.dynamic_bus_mv);
+            snprintf(current_line, sizeof(current_line), "I   : %.1f mA", g_app.dynamic_measured_mA);
+            snprintf(power_line, sizeof(power_line), "PWR : %.0f mW", g_app.dynamic_power_mW);
+            snprintf(vbus_line, sizeof(vbus_line), "VBUS: %ld mV", (long)g_app.dynamic_bus_mv);
         }
         else
         {
@@ -579,16 +589,12 @@ void ui_render_display_frame(uint8_t *fb)
         }
 
         if (g_app.dynamic_power_limited)
-        {
-            snprintf(status_line, sizeof(status_line), "LIMIT: HOLD <=2W");
-        }
+            snprintf(status_line, sizeof(status_line), "LIMIT: MAX %.0fW", LOAD_POWER_LIMIT_MW / 1000.0f);
         else
-        {
-            snprintf(status_line, sizeof(status_line), "PWM : %lu", (unsigned long)g_app.dynamic_duty_steps);
-        }
+            snprintf(status_line, sizeof(status_line), "STATUS: OK");
 
         sh1106_fb_draw_text(fb, 0, 8, "DYNAMIC LOAD");
-        sh1106_fb_draw_text(fb, 0, 18, set_line);
+        sh1106_fb_draw_text(fb, 0, 18, load_bar);
         sh1106_fb_draw_text(fb, 0, 28, current_line);
         sh1106_fb_draw_text(fb, 0, 38, power_line);
         sh1106_fb_draw_text(fb, 0, 48, vbus_line);
