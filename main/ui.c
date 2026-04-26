@@ -4,8 +4,10 @@
 #include <string.h>
 
 #include <driver/gpio.h>
+#include <esp_app_desc.h>
 #include <esp_log.h>
 #include <esp_sleep.h>
+#include <esp_system.h>
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -50,7 +52,7 @@ static const char *ui_home_title(int index)
     static const char *titles[HOME_SECTION_COUNT] = {
         "NETWORK",
         "MEASURE",
-        "POWER",
+        "SYSTEM",
     };
 
     int i = wrap_index(index, HOME_SECTION_COUNT);
@@ -76,10 +78,19 @@ static const char *ui_menu_item_label(int home_index, int menu_index)
     {
         if (menu_index == 0)
         {
+            return "OTA";
+        }
+        if (menu_index == 1)
+        {
+            return "RESET";
+        }
+        if (menu_index == 2)
+        {
             return "DEEP SLEEP";
         }
         return "BACK";
     }
+
 
     if (home_index == HOME_SECTION_MEASURE)
     {
@@ -106,6 +117,10 @@ static int ui_menu_item_count(int home_index)
     if (home_index == HOME_SECTION_MEASURE)
     {
         return 3;
+    }
+    if (home_index == HOME_SECTION_POWER)
+    {
+        return 4;
     }
     return 2;
 }
@@ -155,6 +170,7 @@ void ui_init_state(void)
     g_app.ui_home_index = HOME_SECTION_NETWORK;
     g_app.ui_menu_index = 0;
     g_app.ui_measure_index = 0;
+    g_app.ui_system_index = 0;
 
     g_app.dynamic_load_active = false;
     g_app.dynamic_duty_steps = 0;
@@ -189,6 +205,13 @@ void ui_on_rotate(int dir)
     if (g_app.ui_screen == UI_SCREEN_ACTION_MEASURE)
     {
         g_app.ui_measure_index = wrap_index(g_app.ui_measure_index + dir, 3);
+        app_display_mark_dirty();
+        return;
+    }
+
+    if (g_app.ui_screen == UI_SCREEN_ACTION_SYSTEM)
+    {
+        g_app.ui_system_index = wrap_index(g_app.ui_system_index + dir, 4);
         app_display_mark_dirty();
         return;
     }
@@ -229,7 +252,27 @@ void ui_on_button(void)
 
         if (g_app.ui_home_index == HOME_SECTION_POWER)
         {
-            enter_deep_sleep_mode();
+            if (g_app.ui_menu_index == 0)
+            {
+                g_app.ui_qr_kind = UI_QR_OTA;
+                ui_set_screen(UI_SCREEN_ACTION_QR);
+                return;
+            }
+
+            if (g_app.ui_menu_index == 1)
+            {
+                ESP_LOGI(TAG, "SYSTEM: reset requested");
+                esp_restart();
+                return;
+            }
+
+            if (g_app.ui_menu_index == 2)
+            {
+                enter_deep_sleep_mode();
+                return;
+            }
+
+            ui_set_screen(UI_SCREEN_HOME);
             return;
         }
 
@@ -283,6 +326,32 @@ void ui_on_button(void)
             measurement_set_producer_mode(next_mode);
             ESP_LOGI(TAG, "Curve tracer mode set to %s", measurement_get_producer_mode_label());
             app_display_mark_dirty();
+            return;
+        }
+
+        ui_set_screen(UI_SCREEN_MENU);
+        return;
+    }
+
+    if (g_app.ui_screen == UI_SCREEN_ACTION_SYSTEM)
+    {
+        if (g_app.ui_system_index == 0)
+        {
+            enter_deep_sleep_mode();
+            return;
+        }
+
+        if (g_app.ui_system_index == 1)
+        {
+            ESP_LOGI(TAG, "SYSTEM: restart requested");
+            esp_restart();
+            return;
+        }
+
+        if (g_app.ui_system_index == 2)
+        {
+            g_app.ui_qr_kind = UI_QR_OTA;
+            ui_set_screen(UI_SCREEN_ACTION_QR);
             return;
         }
 
@@ -427,6 +496,7 @@ void ui_render_display_frame(uint8_t *fb)
         char line0[24] = {0};
         char line1[24] = {0};
         char line2[24] = {0};
+        char line3[24] = {0};
         int item_count = ui_menu_item_count(g_app.ui_home_index);
 
         snprintf(line0, sizeof(line0), "%s %s",
@@ -441,21 +511,43 @@ void ui_render_display_frame(uint8_t *fb)
                      g_app.ui_menu_index == 2 ? ">>" : "  ",
                      ui_menu_item_label(g_app.ui_home_index, 2));
         }
+        if (item_count > 3)
+        {
+            snprintf(line3, sizeof(line3), "%s %s",
+                     g_app.ui_menu_index == 3 ? ">>" : "  ",
+                     ui_menu_item_label(g_app.ui_home_index, 3));
+        }
+
+        int section_y = (item_count > 3) ? 16 : 18;
+        int line0_y = (item_count > 3) ? 24 : 30;
+        int line1_y = (item_count > 3) ? 34 : 42;
+        int line2_y = (item_count > 3) ? 44 : 54;
+        int line3_y = 56;
 
         sh1106_fb_draw_text(fb, 0, 8, "MENU");
-        sh1106_fb_draw_text(fb, 0, 18, ui_home_title(g_app.ui_home_index));
-        sh1106_fb_draw_text(fb, 0, 30, line0);
-        sh1106_fb_draw_text(fb, 0, 42, line1);
+        sh1106_fb_draw_text(fb, 0, section_y, ui_home_title(g_app.ui_home_index));
+        sh1106_fb_draw_text(fb, 0, line0_y, line0);
+        sh1106_fb_draw_text(fb, 0, line1_y, line1);
         if (item_count > 2)
         {
-            sh1106_fb_draw_text(fb, 0, 54, line2);
+            sh1106_fb_draw_text(fb, 0, line2_y, line2);
+        }
+        if (item_count > 3)
+        {
+            sh1106_fb_draw_text(fb, 0, line3_y, line3);
         }
         return;
     }
 
     if (g_app.ui_screen == UI_SCREEN_ACTION_QR)
     {
-        const char *payload = (g_app.ui_qr_kind == UI_QR_AP_IP) ? "http://192.168.4.1" : g_app.wifi_qr_payload;
+        const char *payload;
+        if (g_app.ui_qr_kind == UI_QR_AP_IP)
+            payload = "http://192.168.4.1";
+        else if (g_app.ui_qr_kind == UI_QR_OTA)
+            payload = "http://192.168.4.1/ota";
+        else
+            payload = g_app.wifi_qr_payload;
         draw_real_qr_to_fb(fb, payload);
         return;
     }
@@ -523,6 +615,33 @@ void ui_render_display_frame(uint8_t *fb)
         sh1106_fb_draw_text(fb, 0, 20, measurement_is_running() ? "STATE: RUNNING" : "STATE: STOPPED");
         sh1106_fb_draw_text(fb, 0, 32, action_line);
         sh1106_fb_draw_text(fb, 0, 44, mode_line);
+        sh1106_fb_draw_text(fb, 0, 56, back_line);
+        return;
+    }
+
+    if (g_app.ui_screen == UI_SCREEN_ACTION_SYSTEM)
+    {
+        char ver_line[48] = {0};
+        char sleep_line[24] = {0};
+        char restart_line[24] = {0};
+        char ota_line[24] = {0};
+        char back_line[24] = {0};
+
+        const esp_app_desc_t *desc = esp_app_get_description();
+        snprintf(ver_line, sizeof(ver_line), "SYS v%s", desc->version);
+        snprintf(sleep_line, sizeof(sleep_line), "%s DEEP SLEEP",
+                 g_app.ui_system_index == 0 ? ">>" : "  ");
+        snprintf(restart_line, sizeof(restart_line), "%s RESTART",
+                 g_app.ui_system_index == 1 ? ">>" : "  ");
+        snprintf(ota_line, sizeof(ota_line), "%s OTA UPDATE",
+                 g_app.ui_system_index == 2 ? ">>" : "  ");
+        snprintf(back_line, sizeof(back_line), "%s BACK",
+                 g_app.ui_system_index == 3 ? ">>" : "  ");
+
+        sh1106_fb_draw_text(fb, 0, 0, ver_line);
+        sh1106_fb_draw_text(fb, 0, 14, sleep_line);
+        sh1106_fb_draw_text(fb, 0, 28, restart_line);
+        sh1106_fb_draw_text(fb, 0, 42, ota_line);
         sh1106_fb_draw_text(fb, 0, 56, back_line);
         return;
     }

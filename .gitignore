@@ -1,4 +1,5 @@
 build/
+log/
 sdkconfig
 sdkconfig.old
 

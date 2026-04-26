@@ -19,6 +19,7 @@ typedef enum
     UI_SCREEN_MENU,
     UI_SCREEN_ACTION_QR,
     UI_SCREEN_ACTION_MEASURE,
+    UI_SCREEN_ACTION_SYSTEM,
     UI_SCREEN_ACTION_DYNAMIC_LOAD,
 } ui_screen_t;
 
@@ -26,6 +27,7 @@ typedef enum
 {
     UI_QR_WIFI = 0,
     UI_QR_AP_IP,
+    UI_QR_OTA,
 } ui_qr_kind_t;
 
 typedef enum
@@ -60,6 +62,7 @@ typedef struct
     int ui_home_index;
     int ui_menu_index;
     int ui_measure_index;
+    int ui_system_index;
     bool dynamic_load_active;
     float dynamic_measured_mA;
     float dynamic_power_mW;

@@ -6,6 +6,7 @@
 #include <esp_wifi.h>
 #include <esp_event.h>
 #include <esp_netif.h>
+#include <lwip/ip_addr.h>
 
 #include "../server/server.h"
 #include "../db/db.h"

@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OTA Update</title>
+  <link rel="icon"
+    href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%2210 0 100 100%22><text y=%22.90em%22 font-size=%2290%22>✈️</text></svg>">
+  </link>
+  <style>
+    body {
+      font-family: monospace;
+      max-width: 520px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      line-height: 1.4;
+    }
+
+    h2 {
+      margin: 0 0 0.75rem;
+    }
+
+    #version {
+      margin: 0.5rem 0 1rem;
+      color: #333;
+    }
+
+    input[type="file"] {
+      margin: 0.5rem 0 0.75rem;
+    }
+
+    button {
+      padding: 0.45rem 0.8rem;
+      cursor: pointer;
+    }
+
+    #status {
+      margin-top: 1rem;
+      white-space: pre-wrap;
+      color: #333;
+    }
+  </style>
+</head>
+
+<body>
+  <h2>OTA Firmware Update</h2>
+  <p id="version">Loading version...</p>
+
+  <h3>App firmware (.bin)</h3>
+  <input id="binFile" type="file" accept=".bin">
+  <br>
+  <button id="uploadBtn" type="button">Upload and Flash</button>
+  <p id="status"></p>
+
+  <h3>Storage / SPIFFS (storage.bin)</h3>
+  <input id="spiffsFile" type="file" accept=".bin">
+  <br>
+  <button id="spiffsBtn" type="button">Upload Storage</button>
+  <p id="spiffsStatus"></p>
+
+  <script>
+    const versionEl = document.getElementById("version");
+    const statusEl = document.getElementById("status");
+    const fileEl = document.getElementById("binFile");
+    const uploadBtn = document.getElementById("uploadBtn");
+    const spiffsFileEl = document.getElementById("spiffsFile");
+    const spiffsBtn = document.getElementById("spiffsBtn");
+    const spiffsStatusEl = document.getElementById("spiffsStatus");
+
+    async function loadVersion() {
+      try {
+        const res = await fetch("/version");
+        const data = await res.json();
+        versionEl.textContent = `Version: ${data.version} (${data.project})`;
+      } catch {
+        versionEl.textContent = "Version: unavailable";
+      }
+    }
+
+    async function uploadBin(file, endpoint, statusEl) {
+      if (!file) {
+        statusEl.textContent = "Select a .bin file first.";
+        return;
+      }
+      statusEl.textContent = `Uploading ${file.name} (${file.size} bytes)...`;
+      try {
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/octet-stream" },
+          body: file
+        });
+        const data = await res.json();
+        statusEl.textContent = data.ok
+          ? "Done. Device is rebooting..."
+          : `Error: ${data.error || "Unknown error"}`;
+      } catch {
+        statusEl.textContent = "Upload failed or device rebooted.";
+      }
+    }
+
+    uploadBtn.addEventListener("click", () =>
+      uploadBin(fileEl.files && fileEl.files[0], "/ota", statusEl));
+
+    spiffsBtn.addEventListener("click", () =>
+      uploadBin(spiffsFileEl.files && spiffsFileEl.files[0], "/ota/spiffs", spiffsStatusEl));
+
+    loadVersion();
+  </script>
+</body>
+
+</html>
