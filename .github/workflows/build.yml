@@ -11,6 +11,14 @@ jobs:
     container:
       image: espressif/idf:v5.5.1
 
+    strategy:
+      matrix:
+        include:
+          - variant: standard
+            secure_boot: false
+          - variant: secure-boot
+            secure_boot: true
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -18,6 +26,17 @@ jobs:
 
       - name: Fix git ownership
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Enable secure boot config
+        if: matrix.secure_boot
+        run: |
+          sed -i 's/^# CONFIG_PARTITION_TABLE_MD5/CONFIG_PARTITION_TABLE_MD5/' sdkconfig.defaults
+          sed -i 's/^# CONFIG_SECURE_BOOT/CONFIG_SECURE_BOOT/' sdkconfig.defaults
+          sed -i 's/^# CONFIG_SECURE_BOOT_V2_ENABLED/CONFIG_SECURE_BOOT_V2_ENABLED/' sdkconfig.defaults
+          sed -i 's/^# CONFIG_SECURE_BOOT_V2_RSA_ENABLED/CONFIG_SECURE_BOOT_V2_RSA_ENABLED/' sdkconfig.defaults
+          sed -i 's/^# CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES/CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES/' sdkconfig.defaults
+          sed -i 's/^# CONFIG_SECURE_BOOT_SIGNING_KEY/CONFIG_SECURE_BOOT_SIGNING_KEY/' sdkconfig.defaults
+          sed -i 's/^# CONFIG_SECURE_BOOT_FLASH_BOOTLOADER_DEFAULT/CONFIG_SECURE_BOOT_FLASH_BOOTLOADER_DEFAULT/' sdkconfig.defaults
 
       - name: Build firmware
         shell: bash
@@ -29,7 +48,7 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: firmware-${{ github.sha }}
+          name: firmware-${{ matrix.variant }}-${{ github.sha }}
           path: |
             build/app.bin
             build/storage.bin
@@ -39,7 +58,7 @@ jobs:
         shell: bash
         run: |
           SHORT_SHA=$(git rev-parse --short HEAD)
-          echo "tag=rev1.${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "tag=rev1.${SHORT_SHA}-${{ matrix.variant }}" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -48,4 +67,4 @@ jobs:
           files: |
             build/app.bin
             build/storage.bin
-          generate_release_notes: true
+          generate_release_notes: ${{ matrix.variant == 'standard' }}
