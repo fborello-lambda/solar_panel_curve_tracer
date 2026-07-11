@@ -357,7 +357,10 @@ static uint32_t calculate_step_size(float max_scale_current_mA, float desired_ra
     if (step_f > (float)pwm_resolution)
         step_f = (float)pwm_resolution;
 
-    return (uint32_t)(step_f + 0.5f);
+    uint32_t step = (uint32_t)(step_f + 0.5f);
+    if (step == 0)
+        step = 1; // never stall the sweep for a positive range
+    return step;
 }
 
 static void dummy_producer_task(void *arg)
@@ -439,6 +442,11 @@ static void producer_task(void *arg)
     (void)arg;
 
     float desired_range_mA = db_get_current_setpoint_mA();
+    if (desired_range_mA <= 0.0f)
+    {
+        ESP_LOGW(TAG, "producer_task: setpoint <= 0, defaulting sweep range to MAX_CURRENT_MA (%.1f mA)", MAX_CURRENT_MA);
+        desired_range_mA = MAX_CURRENT_MA;
+    }
     uint32_t pwm_res;
     pwm_controller_get_resolution(&pwm_res);
 
