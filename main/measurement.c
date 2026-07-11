@@ -4,6 +4,7 @@
 #include <stdio.h>
 
 #include <esp_log.h>
+#include <esp_timer.h>
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -19,6 +20,11 @@
 #include "pwm_controller.h"
 
 static const char *TAG = "MEASURE";
+
+// Per-point integration window. 100 ms spans an integer number of mains-ripple
+// half-cycles for both 50 Hz (10) and 60 Hz (12), so averaging across it cancels
+// light flicker (e.g. a dimmed halogen) rather than aliasing it.
+#define SAMPLE_INTEGRATION_US 100000
 
 static curve_producer_mode_t s_producer_mode = CURVE_PRODUCER_REAL;
 
@@ -479,13 +485,23 @@ static void producer_task(void *arg)
         int attempts = 0;
         bool success = false;
 
+        // Integrate this point over a fixed time window, sampling as fast as the
+        // INA219/I2C allow, instead of taking a fixed number of samples spaced
+        // 100 ms apart. The old 100 ms spacing landed every sample on the same
+        // mains-ripple phase and aliased light flicker; a full window averages it
+        // out (see SAMPLE_INTEGRATION_US).
+        // NOTE: do NOT add a vTaskDelay() to pace this loop. The FreeRTOS tick is
+        // 10 ms, so any sub-tick delay rounds up to 10 ms and re-creates the
+        // phase-locked aliasing. The blocking I2C reads pace the loop and yield
+        // the CPU on their own.
         int64_t shunt_uV_sum = 0;
         int64_t bus_mV_sum = 0;
         int64_t current_mA_sum = 0;
         int64_t power_mW_sum = 0;
         int valid = 0;
 
-        for (int j = 0; j < MAX_MEASUREMENTS_PER_CYCLE; j++)
+        int64_t integ_start_us = esp_timer_get_time();
+        do
         {
             if (g_app.measurement_stop_requested)
                 break;
@@ -508,13 +524,7 @@ static void producer_task(void *arg)
                 power_mW_sum += power_mW;
                 valid++;
             }
-            else
-            {
-                ESP_LOGW(TAG, "driver_ina219: sample %d dropped (read failed)", j);
-            }
-
-            vTaskDelay(pdMS_TO_TICKS(1000 / MAX_MEASUREMENTS_PER_CYCLE));
-        }
+        } while ((esp_timer_get_time() - integ_start_us) < SAMPLE_INTEGRATION_US);
 
         if (valid == 0)
         {
@@ -532,8 +542,8 @@ static void producer_task(void *arg)
         int32_t current_mA = (int32_t)(current_mA_sum / valid);
         int32_t power_mW = (int32_t)(power_mW_sum / valid);
 
-        ESP_LOGI(TAG, "VBUS=%d mV  VSHUNT=%d uV  I=%d mA  P=%d mW",
-                 bus_mV, shunt_uV, current_mA, power_mW);
+        ESP_LOGI(TAG, "VBUS=%d mV  VSHUNT=%d uV  I=%d mA  P=%d mW (avg of %d)",
+                 bus_mV, shunt_uV, current_mA, power_mW, valid);
 
         int32_t abs_power_mW = (power_mW < 0) ? -power_mW : power_mW;
         float near_limit_mW = LOAD_POWER_LIMIT_MW - LOAD_POWER_NEAR_MARGIN_MW;
