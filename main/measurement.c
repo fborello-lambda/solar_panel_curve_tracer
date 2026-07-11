@@ -56,6 +56,24 @@ bool measurement_request(bool start)
     {
         ESP_LOGW(TAG, "measurement_request: failed to take mutex");
     }
+
+    // For a stop, wait (outside the mutex) for the producer to actually exit,
+    // up to a bound. The producer clears g_app.producer_task on self-delete.
+    if (!start && changed)
+    {
+        const int max_wait_ms = 2000;
+        int waited = 0;
+        while (g_app.producer_task != NULL && waited < max_wait_ms)
+        {
+            vTaskDelay(pdMS_TO_TICKS(20));
+            waited += 20;
+        }
+        if (g_app.producer_task != NULL)
+        {
+            ESP_LOGW(TAG, "measurement_request: producer did not stop within %d ms", max_wait_ms);
+        }
+    }
+
     return changed;
 }
 
@@ -273,6 +291,7 @@ static bool measurement_start_locked(void)
         return false;
 
     db_reset();
+    g_app.measurement_stop_requested = false;
 
     TaskFunction_t producer_fn = (s_producer_mode == CURVE_PRODUCER_DUMMY) ? dummy_producer_task : producer_task;
     const char *producer_name = (s_producer_mode == CURVE_PRODUCER_DUMMY) ? "producer_demo" : "producer";
@@ -297,16 +316,11 @@ static bool measurement_stop_locked(void)
     if (!g_app.measurement_running)
         return false;
 
-    if (g_app.producer_task)
-    {
-        db_reset();
-        pwm_controller_set_duty(0);
-        vTaskDelete(g_app.producer_task);
-        g_app.producer_task = NULL;
-    }
-
-    measurement_apply_state_locked(false);
-    ESP_LOGI(TAG, "Measurement cycle stopped");
+    // Cooperative stop: signal the producer, which will finish its current
+    // step, release all locks, zero the PWM, and delete itself. Never
+    // vTaskDelete() it here — it may hold the I2C bus or db mutex.
+    g_app.measurement_stop_requested = true;
+    ESP_LOGI(TAG, "Measurement stop requested");
     return true;
 }
 
@@ -377,6 +391,12 @@ static void dummy_producer_task(void *arg)
     int len = sizeof(x_array) / sizeof(x_array[0]);
     for (int i = 0; i < len; ++i)
     {
+        if (g_app.measurement_stop_requested)
+        {
+            ESP_LOGI(TAG, "dummy_producer_task: stop requested, ending early");
+            break;
+        }
+
         ESP_LOGI(TAG, "dummy_producer_task: Set duty to %d%%", duty);
 
         const int max_retries = 0;
@@ -462,6 +482,12 @@ static void producer_task(void *arg)
 
     for (int i = 0; i < DB_MAX_SAMPLES; i++)
     {
+        if (g_app.measurement_stop_requested)
+        {
+            ESP_LOGI(TAG, "producer_task: stop requested, ending sweep early");
+            break;
+        }
+
         const int max_retries = 5;
         int attempts = 0;
         bool success = false;
@@ -478,6 +504,8 @@ static void producer_task(void *arg)
 
         for (int j = 0; j < MAX_MEASUREMENTS_PER_CYCLE; j++)
         {
+            if (g_app.measurement_stop_requested)
+                break;
             if (ina219_get_shunt_voltage_uv(g_app.ina_dev, &shunt_uV) != ESP_OK)
             {
                 ESP_LOGW(TAG, "driver_ina219: shunt read failed");
