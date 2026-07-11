@@ -54,6 +54,7 @@ typedef struct
     bool measurement_running;
     bool pwm_ready;
     bool ina_ready;
+    volatile bool measurement_stop_requested;
     char wifi_qr_payload[128];
     uint8_t qr_frame[SH1106_FB_SIZE];
     bool qr_frame_valid;

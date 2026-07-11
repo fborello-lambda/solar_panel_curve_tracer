@@ -56,6 +56,24 @@ bool measurement_request(bool start)
     {
         ESP_LOGW(TAG, "measurement_request: failed to take mutex");
     }
+
+    // For a stop, wait (outside the mutex) for the producer to actually exit,
+    // up to a bound. The producer clears g_app.producer_task on self-delete.
+    if (!start && changed)
+    {
+        const int max_wait_ms = 2000;
+        int waited = 0;
+        while (g_app.producer_task != NULL && waited < max_wait_ms)
+        {
+            vTaskDelay(pdMS_TO_TICKS(20));
+            waited += 20;
+        }
+        if (g_app.producer_task != NULL)
+        {
+            ESP_LOGW(TAG, "measurement_request: producer did not stop within %d ms", max_wait_ms);
+        }
+    }
+
     return changed;
 }
 
@@ -273,6 +291,7 @@ static bool measurement_start_locked(void)
         return false;
 
     db_reset();
+    g_app.measurement_stop_requested = false;
 
     TaskFunction_t producer_fn = (s_producer_mode == CURVE_PRODUCER_DUMMY) ? dummy_producer_task : producer_task;
     const char *producer_name = (s_producer_mode == CURVE_PRODUCER_DUMMY) ? "producer_demo" : "producer";
@@ -297,16 +316,11 @@ static bool measurement_stop_locked(void)
     if (!g_app.measurement_running)
         return false;
 
-    if (g_app.producer_task)
-    {
-        db_reset();
-        pwm_controller_set_duty(0);
-        vTaskDelete(g_app.producer_task);
-        g_app.producer_task = NULL;
-    }
-
-    measurement_apply_state_locked(false);
-    ESP_LOGI(TAG, "Measurement cycle stopped");
+    // Cooperative stop: signal the producer, which will finish its current
+    // step, release all locks, zero the PWM, and delete itself. Never
+    // vTaskDelete() it here — it may hold the I2C bus or db mutex.
+    g_app.measurement_stop_requested = true;
+    ESP_LOGI(TAG, "Measurement stop requested");
     return true;
 }
 
@@ -357,7 +371,10 @@ static uint32_t calculate_step_size(float max_scale_current_mA, float desired_ra
     if (step_f > (float)pwm_resolution)
         step_f = (float)pwm_resolution;
 
-    return (uint32_t)(step_f + 0.5f);
+    uint32_t step = (uint32_t)(step_f + 0.5f);
+    if (step == 0)
+        step = 1; // never stall the sweep for a positive range
+    return step;
 }
 
 static void dummy_producer_task(void *arg)
@@ -374,6 +391,12 @@ static void dummy_producer_task(void *arg)
     int len = sizeof(x_array) / sizeof(x_array[0]);
     for (int i = 0; i < len; ++i)
     {
+        if (g_app.measurement_stop_requested)
+        {
+            ESP_LOGI(TAG, "dummy_producer_task: stop requested, ending early");
+            break;
+        }
+
         ESP_LOGI(TAG, "dummy_producer_task: Set duty to %d%%", duty);
 
         const int max_retries = 0;
@@ -439,6 +462,11 @@ static void producer_task(void *arg)
     (void)arg;
 
     float desired_range_mA = db_get_current_setpoint_mA();
+    if (desired_range_mA <= 0.0f)
+    {
+        ESP_LOGW(TAG, "producer_task: setpoint <= 0, defaulting sweep range to MAX_CURRENT_MA (%.1f mA)", MAX_CURRENT_MA);
+        desired_range_mA = MAX_CURRENT_MA;
+    }
     uint32_t pwm_res;
     pwm_controller_get_resolution(&pwm_res);
 
@@ -454,61 +482,68 @@ static void producer_task(void *arg)
 
     for (int i = 0; i < DB_MAX_SAMPLES; i++)
     {
+        if (g_app.measurement_stop_requested)
+        {
+            ESP_LOGI(TAG, "producer_task: stop requested, ending sweep early");
+            break;
+        }
+
         const int max_retries = 5;
         int attempts = 0;
         bool success = false;
 
-        int32_t shunt_uV = 0;
-        int32_t bus_mV = 0;
-        int32_t current_mA = 0;
-        int32_t power_mW = 0;
-
-        int32_t shunt_uV_array[MAX_MEASUREMENTS_PER_CYCLE] = {0};
-        int32_t bus_mV_array[MAX_MEASUREMENTS_PER_CYCLE] = {0};
-        int32_t current_mA_array[MAX_MEASUREMENTS_PER_CYCLE] = {0};
-        int32_t power_mW_array[MAX_MEASUREMENTS_PER_CYCLE] = {0};
+        int64_t shunt_uV_sum = 0;
+        int64_t bus_mV_sum = 0;
+        int64_t current_mA_sum = 0;
+        int64_t power_mW_sum = 0;
+        int valid = 0;
 
         for (int j = 0; j < MAX_MEASUREMENTS_PER_CYCLE; j++)
         {
-            if (ina219_get_shunt_voltage_uv(g_app.ina_dev, &shunt_uV) != ESP_OK)
+            if (g_app.measurement_stop_requested)
+                break;
+
+            int32_t shunt_uV = 0;
+            int32_t bus_mV = 0;
+            int32_t current_mA = 0;
+            int32_t power_mW = 0;
+
+            bool ok = ina219_get_shunt_voltage_uv(g_app.ina_dev, &shunt_uV) == ESP_OK;
+            ok &= ina219_get_bus_voltage_mv(g_app.ina_dev, &bus_mV) == ESP_OK;
+            ok &= ina219_get_current_ma(g_app.ina_dev, &g_app.ina_cal, &current_mA) == ESP_OK;
+            ok &= ina219_get_power_mw(g_app.ina_dev, &g_app.ina_cal, &power_mW) == ESP_OK;
+
+            if (ok)
             {
-                ESP_LOGW(TAG, "driver_ina219: shunt read failed");
+                shunt_uV_sum += shunt_uV;
+                bus_mV_sum += bus_mV;
+                current_mA_sum += current_mA;
+                power_mW_sum += power_mW;
+                valid++;
             }
-            if (ina219_get_bus_voltage_mv(g_app.ina_dev, &bus_mV) != ESP_OK)
+            else
             {
-                ESP_LOGW(TAG, "driver_ina219: bus read failed");
-            }
-            if (ina219_get_current_ma(g_app.ina_dev, &g_app.ina_cal, &current_mA) != ESP_OK)
-            {
-                ESP_LOGW(TAG, "driver_ina219: current read failed");
-            }
-            if (ina219_get_power_mw(g_app.ina_dev, &g_app.ina_cal, &power_mW) != ESP_OK)
-            {
-                ESP_LOGW(TAG, "driver_ina219: power read failed");
+                ESP_LOGW(TAG, "driver_ina219: sample %d dropped (read failed)", j);
             }
 
-            shunt_uV_array[j] = shunt_uV;
-            bus_mV_array[j] = bus_mV;
-            current_mA_array[j] = current_mA;
-            power_mW_array[j] = power_mW;
             vTaskDelay(pdMS_TO_TICKS(1000 / MAX_MEASUREMENTS_PER_CYCLE));
         }
 
-        shunt_uV = 0;
-        bus_mV = 0;
-        current_mA = 0;
-        power_mW = 0;
-        for (int k = 0; k < MAX_MEASUREMENTS_PER_CYCLE; k++)
+        if (valid == 0)
         {
-            shunt_uV += shunt_uV_array[k];
-            bus_mV += bus_mV_array[k];
-            current_mA += current_mA_array[k];
-            power_mW += power_mW_array[k];
+            ESP_LOGW(TAG, "producer_task: no valid samples this step, advancing duty without recording point");
+            duty += stepsize;
+            if (duty > pwm_res)
+                duty = pwm_res;
+            pwm_controller_set_duty_in_res_steps(duty);
+            vTaskDelay(pdMS_TO_TICKS(250));
+            continue;
         }
-        shunt_uV /= MAX_MEASUREMENTS_PER_CYCLE;
-        bus_mV /= MAX_MEASUREMENTS_PER_CYCLE;
-        current_mA /= MAX_MEASUREMENTS_PER_CYCLE;
-        power_mW /= MAX_MEASUREMENTS_PER_CYCLE;
+
+        int32_t shunt_uV = (int32_t)(shunt_uV_sum / valid);
+        int32_t bus_mV = (int32_t)(bus_mV_sum / valid);
+        int32_t current_mA = (int32_t)(current_mA_sum / valid);
+        int32_t power_mW = (int32_t)(power_mW_sum / valid);
 
         ESP_LOGI(TAG, "VBUS=%d mV  VSHUNT=%d uV  I=%d mA  P=%d mW",
                  bus_mV, shunt_uV, current_mA, power_mW);

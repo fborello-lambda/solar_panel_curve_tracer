@@ -10,7 +10,7 @@
 // Comment from me:
 // The application isn't that critical, if there are some bugs related to this variable
 // a simple reset is better than adding a complex logic (IMO).
-static volatile float current_setpoint_mA = 0.0f;
+static volatile float current_setpoint_mA = MAX_CURRENT_MA;
 float db_get_current_setpoint_mA(void)
 {
     return current_setpoint_mA;
