@@ -189,6 +189,8 @@ void app_tasks_start(void)
         .use_internal_pullups = true,
         .sw_debounce_ms = 180,
         .event_queue_len = 32,
+        .counts_per_step = 4,      // raise to make the menu less sensitive, lower for snappier
+        .rotation_debounce_ms = 5,
     };
 
     esp_err_t enc_ret = encoder_init(&enc_cfg);
