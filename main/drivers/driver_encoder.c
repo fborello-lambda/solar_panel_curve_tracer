@@ -27,6 +27,10 @@ typedef struct
     volatile int32_t position;
     volatile int last_clk_level;
     volatile TickType_t last_sw_tick;
+    uint32_t counts_per_step;
+    uint32_t rotation_debounce_ms;
+    volatile int32_t step_accum;
+    volatile TickType_t last_rot_tick;
     bool initialized;
 } encoder_state_t;
 
@@ -44,23 +48,52 @@ static void IRAM_ATTR encoder_isr(void *arg)
             s_encoder.last_clk_level = clk;
             if (clk == 1)
             {
+                TickType_t now = xTaskGetTickCountFromISR();
+                TickType_t debounce_ticks = ms_to_ticks(s_encoder.rotation_debounce_ms);
+                if ((now - s_encoder.last_rot_tick) < debounce_ticks)
+                {
+                    return; // reject bounce: too soon after the last accepted edge
+                }
+                s_encoder.last_rot_tick = now;
+
                 int dt = gpio_get_level(s_encoder.dt_pin);
                 int dir = (dt != clk) ? 1 : -1;
                 s_encoder.position += dir;
 
-                BaseType_t woke = pdFALSE;
-                if (s_encoder.queue)
+                // Reset the accumulator on a direction reversal so flipping
+                // direction responds immediately.
+                if ((dir > 0 && s_encoder.step_accum < 0) ||
+                    (dir < 0 && s_encoder.step_accum > 0))
                 {
+                    s_encoder.step_accum = 0;
+                }
+                s_encoder.step_accum += dir;
+
+                int emit = 0;
+                if (s_encoder.step_accum >= (int32_t)s_encoder.counts_per_step)
+                {
+                    emit = 1;
+                    s_encoder.step_accum = 0;
+                }
+                else if (s_encoder.step_accum <= -(int32_t)s_encoder.counts_per_step)
+                {
+                    emit = -1;
+                    s_encoder.step_accum = 0;
+                }
+
+                if (emit != 0 && s_encoder.queue)
+                {
+                    BaseType_t woke = pdFALSE;
                     encoder_event_t ev = {
-                        .type = (dir > 0) ? ENCODER_EVENT_CW : ENCODER_EVENT_CCW,
+                        .type = (emit > 0) ? ENCODER_EVENT_CW : ENCODER_EVENT_CCW,
                         .position = s_encoder.position,
-                        .timestamp_ms = ticks_to_ms(xTaskGetTickCountFromISR()),
+                        .timestamp_ms = ticks_to_ms(now),
                     };
                     xQueueSendFromISR(s_encoder.queue, &ev, &woke);
-                }
-                if (woke)
-                {
-                    portYIELD_FROM_ISR();
+                    if (woke)
+                    {
+                        portYIELD_FROM_ISR();
+                    }
                 }
             }
         }
@@ -115,6 +148,10 @@ esp_err_t encoder_init(const encoder_config_t *cfg)
     s_encoder.sw_debounce_ms = (cfg->sw_debounce_ms == 0) ? 150 : cfg->sw_debounce_ms;
     s_encoder.position = 0;
     s_encoder.last_sw_tick = 0;
+    s_encoder.counts_per_step = (cfg->counts_per_step == 0) ? 4 : cfg->counts_per_step;
+    s_encoder.rotation_debounce_ms = (cfg->rotation_debounce_ms == 0) ? 5 : cfg->rotation_debounce_ms;
+    s_encoder.step_accum = 0;
+    s_encoder.last_rot_tick = 0;
 
     uint32_t q_len = (cfg->event_queue_len == 0) ? 16 : cfg->event_queue_len;
     s_encoder.queue = xQueueCreate(q_len, sizeof(encoder_event_t));

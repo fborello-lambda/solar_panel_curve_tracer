@@ -36,6 +36,8 @@ typedef struct
     bool use_internal_pullups;
     uint32_t sw_debounce_ms;
     uint32_t event_queue_len;
+    uint32_t counts_per_step;      /* raw pulses per emitted CW/CCW event; 0 -> default */
+    uint32_t rotation_debounce_ms; /* min ms between accepted rotation edges; 0 -> default */
 } encoder_config_t;
 
 esp_err_t encoder_init(const encoder_config_t *cfg);
