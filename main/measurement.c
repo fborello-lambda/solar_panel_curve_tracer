@@ -32,6 +32,7 @@ static uint32_t calculate_step_size(float max_scale_current_mA, float desired_ra
 
 static void dummy_producer_task(void *arg);
 static void producer_task(void *arg);
+static void producer_finish(const char *task_name);
 
 bool measurement_is_running(void)
 {
@@ -377,12 +378,31 @@ static uint32_t calculate_step_size(float max_scale_current_mA, float desired_ra
     return step;
 }
 
+static void producer_finish(const char *task_name)
+{
+    if (g_app.state_mtx && xSemaphoreTake(g_app.state_mtx, pdMS_TO_TICKS(10)) == pdTRUE)
+    {
+        g_app.producer_task = NULL;
+        measurement_apply_state_locked(false);
+        pwm_controller_set_duty(0);
+        xSemaphoreGive(g_app.state_mtx);
+    }
+    else
+    {
+        g_app.producer_task = NULL;
+        g_app.measurement_running = false;
+        pwm_controller_set_duty(0);
+    }
+
+    ESP_LOGI(TAG, "%s: Deleting self", task_name);
+}
+
 static void dummy_producer_task(void *arg)
 {
     (void)arg;
 
     int8_t duty = 0;
-    pwm_controller_set_duty(duty);
+    pwm_controller_set_duty(duty); // duty is a percentage (0..100)
     ESP_LOGI(TAG, "dummy_producer_task: Starting data production");
 
     float x_array[] = {22.464, 22.215, 21.942, 21.661, 21.365, 21.059, 20.731, 20.391, 20.021, 19.612, 19.164, 18.624, 17.823, 16.489, 14.571, 6.140, 0.060, 0.060, 0.059, 0.060};
@@ -399,61 +419,28 @@ static void dummy_producer_task(void *arg)
 
         ESP_LOGI(TAG, "dummy_producer_task: Set duty to %d%%", duty);
 
-        const int max_retries = 0;
-        int attempts = 0;
-        bool success = false;
-
-        while (!(success = db_add(x_array[i], y_array[i])) && attempts++ < max_retries)
+        if (!db_add(x_array[i], y_array[i]))
         {
-            vTaskDelay(pdMS_TO_TICKS(100));
-        }
-
-        if (!success)
-        {
-            ESP_LOGW(TAG, "dummy_producer_task: db_add failed after %d attempts, dropping sample (x=%.3f,y=%.3f)", attempts, x_array[i], y_array[i]);
-        }
-
-        for (int j = 0; j < MAX_MEASUREMENTS_PER_CYCLE; j++)
-        {
-            vTaskDelay(pdMS_TO_TICKS(10 * MAX_MEASUREMENTS_PER_CYCLE));
-        }
-
-        ESP_LOGI(TAG, "dummy_producer_task: db_add succeeded (x=%.3f,y=%.3f) || attempts=%d", x_array[i], y_array[i], attempts);
-
-        if (duty == 100)
-        {
-            duty += 10;
-            duty %= 100;
+            ESP_LOGW(TAG, "dummy_producer_task: db_add failed, dropping sample (x=%.3f,y=%.3f)", x_array[i], y_array[i]);
         }
         else
         {
-            duty += 10;
-            if (duty > 100)
-                duty = 100;
+            ESP_LOGI(TAG, "dummy_producer_task: db_add succeeded (x=%.3f,y=%.3f)", x_array[i], y_array[i]);
         }
 
-        pwm_controller_set_duty(duty);
+        vTaskDelay(pdMS_TO_TICKS(1000)); // hold each demo point ~1 s
+
+        duty += 10;
+        if (duty > 100)
+            duty = 100;
+
+        pwm_controller_set_duty(duty); // duty is a percentage (0..100)
         vTaskDelay(pdMS_TO_TICKS(250));
     }
 
     ESP_LOGI(TAG, "dummy_producer_task: Finished data production");
 
-    if (g_app.state_mtx && xSemaphoreTake(g_app.state_mtx, pdMS_TO_TICKS(10)) == pdTRUE)
-    {
-        g_app.producer_task = NULL;
-        measurement_apply_state_locked(false);
-        pwm_controller_set_duty(0);
-        xSemaphoreGive(g_app.state_mtx);
-    }
-    else
-    {
-        g_app.producer_task = NULL;
-        g_app.measurement_running = false;
-        pwm_controller_set_duty(0);
-    }
-
-    ESP_LOGI(TAG, "dummy_producer_task: Deleting self");
-
+    producer_finish("dummy_producer_task");
     vTaskDelete(NULL);
 }
 
@@ -475,7 +462,7 @@ static void producer_task(void *arg)
 
     uint32_t duty = 0;
 
-    pwm_controller_set_duty_in_res_steps(duty);
+    pwm_controller_set_duty_in_res_steps(duty); // duty is in raw resolution steps (0..pwm_res)
     vTaskDelay(pdMS_TO_TICKS(250));
 
     ESP_LOGI(TAG, "producer_task: Starting data production");
@@ -582,21 +569,6 @@ static void producer_task(void *arg)
 
     ESP_LOGI(TAG, "producer_task: Finished data production");
 
-    if (g_app.state_mtx && xSemaphoreTake(g_app.state_mtx, pdMS_TO_TICKS(10)) == pdTRUE)
-    {
-        g_app.producer_task = NULL;
-        measurement_apply_state_locked(false);
-        pwm_controller_set_duty(0);
-        xSemaphoreGive(g_app.state_mtx);
-    }
-    else
-    {
-        g_app.producer_task = NULL;
-        g_app.measurement_running = false;
-        pwm_controller_set_duty(0);
-    }
-
-    ESP_LOGI(TAG, "producer_task: Deleting self");
-
+    producer_finish("producer_task");
     vTaskDelete(NULL);
 }

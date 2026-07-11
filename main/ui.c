@@ -75,7 +75,7 @@ static const char *ui_menu_item_label(int home_index, int menu_index)
         return "BACK";
     }
 
-    if (home_index == HOME_SECTION_POWER)
+    if (home_index == HOME_SECTION_SYSTEM)
     {
         if (menu_index == 0)
         {
@@ -119,7 +119,7 @@ static int ui_menu_item_count(int home_index)
     {
         return 3;
     }
-    if (home_index == HOME_SECTION_POWER)
+    if (home_index == HOME_SECTION_SYSTEM)
     {
         return 4;
     }
@@ -251,7 +251,7 @@ void ui_on_button(void)
             return;
         }
 
-        if (g_app.ui_home_index == HOME_SECTION_POWER)
+        if (g_app.ui_home_index == HOME_SECTION_SYSTEM)
         {
             if (g_app.ui_menu_index == 0)
             {
@@ -482,8 +482,8 @@ void ui_render_display_frame(uint8_t *fb)
                  g_app.ui_home_index == HOME_SECTION_MEASURE ? ">>" : "  ",
                  ui_home_title(HOME_SECTION_MEASURE));
         snprintf(home2, sizeof(home2), "%s %s",
-                 g_app.ui_home_index == HOME_SECTION_POWER ? ">>" : "  ",
-                 ui_home_title(HOME_SECTION_POWER));
+                 g_app.ui_home_index == HOME_SECTION_SYSTEM ? ">>" : "  ",
+                 ui_home_title(HOME_SECTION_SYSTEM));
 
         sh1106_fb_draw_text(fb, 0, 8, "HOME");
         sh1106_fb_draw_text(fb, 0, 22, home0);
