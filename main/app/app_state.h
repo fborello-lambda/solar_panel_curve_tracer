@@ -34,7 +34,7 @@ typedef enum
 {
     HOME_SECTION_NETWORK = 0,
     HOME_SECTION_MEASURE,
-    HOME_SECTION_POWER,
+    HOME_SECTION_SYSTEM,
     HOME_SECTION_COUNT,
 } home_section_t;
 
