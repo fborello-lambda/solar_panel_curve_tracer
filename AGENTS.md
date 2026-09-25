@@ -13,7 +13,8 @@ Target: **ESP32-C3**, ESP-IDF **5.5.1**, RISC-V toolchain.
 ```text
 main/
   main.c              # app_main — hardware init, task launch, deep-sleep wakeup
-  measurement.c/h     # PWM sweep loop, INA219 acquisition, dynamic load mode
+  measurement.c/h     # auto-ranged PWM sweep loop, INA219 acquisition, demo producer
+  dynamic_load.c/h    # encoder-driven manual electronic load (independent of the sweep)
   ui.c/h              # OLED menu state machine and rendering
   app/
     app_state.h/.c    # g_app singleton + mutex
@@ -29,7 +30,7 @@ main/
     json_builder      # Lightweight JSON array serialiser for /data endpoint
     led_controller    # WS2812 RGB LED (GPIO 10)
   server/
-    server.c/h        # HTTP handlers: /, /data, /status, /set-current, /ota
+    server.c/h        # HTTP handlers: /, /data, /start-measurement, /ota, /ota/spiffs, /version, /wifi-config
   db/
     db.c/h            # Circular sample buffer (max 20 points), mutex-protected
 spiffs/               # Static web files bundled into SPIFFS partition
@@ -78,6 +79,11 @@ Partition table offset: `0xD000` (pushed up to fit the secure-boot-signed bootlo
 - **Two producer modes**: `producer_task` (real INA219 hardware) and `dummy_producer_task` (synthetic curve for testing without hardware).
 - **Dynamic load**: encoder adjusts PWM setpoint live; soft power cap at 2000 mW with 150 mW hysteresis.
 - **OTA**: dual A/B slots; update via `/ota` HTTP endpoint or `idf.py ota`.
+- **Auto-range sweep**: each trace probes Voc at zero load, then doubles the commanded PWM duty until the panel
+  collapses, to locate the knee of the I-V curve without an operator-entered current range. The sweep's 20 points
+  are then placed mostly across that knee (a coarse leg below it, most of the budget through it, a short tail up
+  to Isc), so a small panel still gets a well-resolved curve shape. The sweep hard-stops (aborts, keeping points
+  already recorded) if measured power reaches 5000 mW.
 
 ---
 

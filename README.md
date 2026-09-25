@@ -55,6 +55,19 @@ The device reboots automatically after each upload.
 >
 > Additionally, once Secure Boot is burned into a device's eFuses it cannot be disabled. If the key is ever lost, the device can never be updated again and is permanently bricked. See [LESSONS.md](LESSONS.md) for the full story.
 
+## How the sweep works
+
+Each trace auto-ranges: the firmware probes open-circuit voltage (Voc), then
+doubles the commanded load current until the panel collapses, which locates
+the knee of the curve without the operator dialling in a current range. The
+20 recorded points are then placed mostly across that knee (a coarse leg
+below it, most of the budget through it, a short tail up to Isc), so a small
+panel (Isc is around 50 mA with the lab practice setup) still gets a well-resolved
+curve shape rather than 20 points all past the cliff. See
+[docs/quick_guide.md](docs/quick_guide.md) for an operator-facing walkthrough
+of using the device, printable as a two-page A4 quick guide (Spanish +
+English) via `docs/build_guide.sh`.
+
 ## What
 
 The Circuit is based on an ESP32-C3 microcontroller, INA219 current sensor, and an op-amp based voltage controlled current source (VCCS) to load the solar panel. The ESP32-C3 reads the voltage and current from the solar panel using the INA219 sensor, and adjusts the load using PWM to control the VCCS. The data is then sent to a web server hosted on the ESP32-C3, where it can be visualized in real-time.

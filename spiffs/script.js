@@ -71,19 +71,9 @@
             },
             label: (ctx) => {
               if (ctx.dataset.label === "I(V)") {
-                // show current with units depending on mode
-                return (
-                  "I: " +
-                  Number(ctx.raw.y).toFixed(3) +
-                  (unitIsMilli ? " mA" : " A")
-                );
+                return "I: " + Number(ctx.raw.y).toFixed(3) + " mA";
               } else {
-                // power in matching units
-                return (
-                  "P: " +
-                  Number(ctx.raw.y).toFixed(3) +
-                  (unitIsMilli ? " mW" : " W")
-                );
+                return "P: " + Number(ctx.raw.y).toFixed(3) + " mW";
               }
             },
           },
@@ -92,15 +82,13 @@
       scales: {
         x: {
           type: "linear",
-          min: 0,
-          max: 25,
+          beginAtZero: true,
           title: { display: true, text: "Voltage [V]", color: MUTED },
           ticks: { color: MUTED },
         },
         y: {
           position: "left",
-          min: 0,
-          max: 10,
+          beginAtZero: true,
           title: { display: true, text: "Current [mA]", color: ACCENT },
           ticks: { color: ACCENT },
         },
@@ -108,78 +96,12 @@
           id: "p",
           // power axis on the right
           position: "right",
+          beginAtZero: true,
           title: { display: true, text: "Power [mW]", color: "red" },
           ticks: { color: "red" },
         },
       },
     },
-  });
-
-  const autoBtn = document.getElementById("autoBtn");
-  const autoPowerBtn = document.getElementById("autoPowerBtn");
-
-  // Used for set-current POST requests
-  const SET_CURRENT_POST_ENDPOINT = "/set-current";
-  const setI = document.getElementById("setI");
-  const setIUnit = document.getElementById("setIUnit");
-  const sendIBtn = document.getElementById("sendI");
-  const sendIStatus = document.getElementById("sendIStatus");
-  const currentRange = document.getElementById("currentRange");
-
-  async function refreshCurrentRange() {
-    try {
-      const r = await fetch("/current", { cache: "no-store" });
-      if (!r.ok) return;
-      const j = await r.json();
-      currentRange.textContent = `Range: ${j.current_mA.toFixed(3)} mA`;
-    } catch (_) {}
-  }
-  refreshCurrentRange();
-  setInterval(refreshCurrentRange, 5000);
-
-  function setCurrentStatus(msg, ok = null) {
-    sendIStatus.textContent = msg;
-    if (ok === true) sendIStatus.style.color = "#8f8";
-    else if (ok === false) sendIStatus.style.color = "#f88";
-    else sendIStatus.style.color = "";
-  }
-
-  async function sendCurrent() {
-    const raw = parseFloat(setI.value);
-    if (!Number.isFinite(raw)) {
-      setCurrentStatus("Enter a number", false);
-      return;
-    }
-    let value_mA = setIUnit.value === "A" ? raw * 1000.0 : raw;
-
-    try {
-      sendIBtn.disabled = true;
-      setCurrentStatus("Sending...");
-      let resp;
-      resp = await fetch(SET_CURRENT_POST_ENDPOINT, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ current_mA: value_mA }),
-      });
-
-      if (!resp.ok) {
-        const msg = await resp.text().catch(() => resp.statusText);
-        throw new Error(msg || "HTTP " + resp.status);
-      }
-      value_resp_mA = await resp
-        .text()
-        .catch(() => resp.json().then((j) => j.current_mA));
-      setCurrentStatus(`Ok: ${value_mA} mA`, true);
-      currentRange.textContent = `Range: ${value_mA.toFixed(3)} mA`;
-    } catch (e) {
-      setCurrentStatus("Error: " + (e.message || e), false);
-    } finally {
-      sendIBtn.disabled = false;
-    }
-  }
-  sendIBtn.addEventListener("click", sendCurrent);
-  setI.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter") sendCurrent();
   });
 
   // Used for start-measurement POST requests
@@ -227,115 +149,36 @@
   }
   startMeasBtn.addEventListener("click", startMeas);
 
-  // true = chart data in mA, false = in A
-  // The server always sends mA, so we start in mA mode
-  let unitIsMilli = true;
-  const unitBtn = document.getElementById("unitBtn");
-
-  function autoScale() {
-    // remove fixed limits so Chart.js autoscale uses data
-    delete chart.options.scales.x.min;
-    delete chart.options.scales.x.max;
-    delete chart.options.scales.y.min;
-    delete chart.options.scales.y.max;
-    delete chart.options.scales.p.min;
-    delete chart.options.scales.p.max;
-    chart.update("none");
-  }
-  autoBtn.addEventListener("click", autoScale);
-
-  function autoScalePower() {
-    // autoscale only the power axis so both can be fullscreen
-    delete chart.options.scales.p.min;
-    delete chart.options.scales.p.max;
-    chart.update("none");
-  }
-  autoPowerBtn.addEventListener("click", autoScalePower);
-
-  function toggleUnits() {
-    // convert current dataset values to the other unit
-    const data = chart.data.datasets[0].data;
-    const oldIsMilli = unitIsMilli;
-    const newIsMilli = !oldIsMilli;
-
-    if (data && data.length) {
-      for (let i = 0; i < data.length; i++) {
-        // oldIsMilli == true means current values are in mA -> convert to A
-        if (oldIsMilli) {
-          data[i] = { x: data[i].x, y: data[i].y / 1000.0 };
-        } else {
-          data[i] = { x: data[i].x, y: data[i].y * 1000.0 };
-        }
-      }
-    }
-
-    // recompute power dataset based on new units:
-    // - if newIsMilli === true -> current in mA, want power in mW: P[mW] = V * I[mA]
-    // - if newIsMilli === false -> current in A, want power in W: P[W] = V * I[A]
-    const cur = chart.data.datasets[0].data || [];
-    chart.data.datasets[1].data = cur.map((pt) => {
-      if (newIsMilli) {
-        return { x: pt.x, y: pt.x * pt.y }; // mW
-      } else {
-        return { x: pt.x, y: pt.x * pt.y }; // W
-      }
-    });
-
-    // Update axis label & convert fixed limits if present
-    if (newIsMilli) {
-      // switching to milliamperes
-      chart.options.scales.y.title.text = "Current [mA]";
-      // convert power axis limits from W->mW if they exist
-      if (typeof chart.options.scales.p.min === "number")
-        chart.options.scales.p.min *= 1000.0;
-      if (typeof chart.options.scales.p.max === "number")
-        chart.options.scales.p.max *= 1000.0;
-      chart.options.scales.p.title.text = "Power [mW]";
-    } else {
-      // switching to Amperes
-      chart.options.scales.y.title.text = "Current [A]";
-      // convert power axis limits from mW->W if they exist
-      if (typeof chart.options.scales.p.min === "number")
-        chart.options.scales.p.min /= 1000.0;
-      if (typeof chart.options.scales.p.max === "number")
-        chart.options.scales.p.max /= 1000.0;
-      chart.options.scales.p.title.text = "Power [W]";
-    }
-
-    unitIsMilli = newIsMilli;
-    chart.update("none");
-  }
-  unitBtn.addEventListener("click", toggleUnits);
-
-  function maybeConvertIncoming(arr) {
-    if (!unitIsMilli) {
-      // Current chart is displaying Amperes; server sends mA -> convert
-      for (let i = 0; i < arr.length; i++) {
-        arr[i].y = arr[i].y / 1000.0;
-      }
-    }
-  }
-
-  // MPPT display elements
+  // Summary display elements (Voc/Isc/Pmax/Vmp/Imp)
+  const vocEl = document.getElementById("voc");
+  const iscEl = document.getElementById("isc");
+  const pmaxEl = document.getElementById("pmax");
   const mpptCurrentEl = document.getElementById("mpptCurrent");
   const mpptVoltageEl = document.getElementById("mpptVoltage");
 
-  function refreshMPPT(data) {
+  function refreshSummary(data) {
     if (!data || !data.length) {
-      mpptCurrentEl.textContent = "MPPT Current: --";
-      mpptVoltageEl.textContent = "MPPT Voltage: --";
+      vocEl.textContent = "Voc: --";
+      iscEl.textContent = "Isc: --";
+      pmaxEl.textContent = "Pmax: --";
+      mpptCurrentEl.textContent = "Imp: --";
+      mpptVoltageEl.textContent = "Vmp: --";
       return;
     }
 
-    // I'm passing a const array to sort() and it even mutates the array... JS :p
-    // An explicit copy is needed.
-    const best = [...data].sort((a, b) => b.x * b.y - a.x * a.y)[0];
+    // Simple approximations: Voc is the voltage of the lowest-current
+    // point, Isc is the current of the lowest-voltage point.
+    const byCurrent = [...data].sort((a, b) => a.y - b.y);
+    const byVoltage = [...data].sort((a, b) => a.x - b.x);
+    const voc = byCurrent[0];
+    const isc = byVoltage[0];
+    const mpp = [...data].sort((a, b) => b.x * b.y - a.x * a.y)[0];
 
-    const currentDisplay = unitIsMilli
-      ? `${best.y.toFixed(3)} mA`
-      : `${best.y.toFixed(3)} A`;
-    mpptCurrentEl.textContent = `MPPT Current: ${currentDisplay}`;
-    mpptVoltageEl.textContent = `MPPT Voltage: ${best.x.toFixed(3)} V`;
+    vocEl.textContent = `Voc: ${voc.x.toFixed(3)} V`;
+    iscEl.textContent = `Isc: ${isc.y.toFixed(3)} mA`;
+    pmaxEl.textContent = `Pmax: ${(mpp.x * mpp.y).toFixed(1)} mW`;
+    mpptCurrentEl.textContent = `Imp: ${mpp.y.toFixed(3)} mA`;
+    mpptVoltageEl.textContent = `Vmp: ${mpp.x.toFixed(3)} V`;
   }
 
   // polling state
@@ -355,10 +198,9 @@
       if (txt[0] === "[") {
         const arr = JSON.parse(txt);
         if (Array.isArray(arr)) {
-          maybeConvertIncoming(arr);
           // replace dataset with server snapshot
           chart.data.datasets[0].data = arr;
-          // power dataset
+          // power dataset (mW = V * mA)
           chart.data.datasets[1].data = arr.map((pt) => ({
             x: pt.x,
             y: pt.x * pt.y,
@@ -389,10 +231,7 @@
           pollIntervalMs = DEFAULT_POLL_MS;
         } else if (serverCount === currentCount && currentCount > 0) {
           console.log("data counts in sync");
-          // in sync -> autoscale both datasets (current and power)
-          autoScale(); // autoscale current and reset power as well
-          autoScalePower(); // autoscale power axis independently
-          refreshMPPT(chart.data.datasets[0].data);
+          refreshSummary(chart.data.datasets[0].data);
           // gentle backoff when idle
           pollIntervalMs = Math.min(5000, pollIntervalMs + 200);
         } else {

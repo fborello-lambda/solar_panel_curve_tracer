@@ -9,6 +9,7 @@
 
 #include "app_hw.h"
 #include "app_state.h"
+#include "dynamic_load.h"
 #include "measurement.h"
 #include "ui.h"
 

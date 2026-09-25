@@ -206,20 +206,6 @@ extern "C"
     int ina219_calibrate_for_32V_2A(i2c_master_dev_handle_t dev_handle, ina219_cal_t *cal);
 
     /**
-     * @brief Read the shunt voltage and return the result in millivolts.
-     *
-     * The INA219 shunt voltage register LSB = 10 µV. This function converts the
-     * signed raw register value to millivolts:
-     *   mV = raw_shunt * 0.01
-     *
-     * @param dev_handle The I2C device handle for the INA219.
-     * @param mV Pointer to int32_t that will receive the shunt voltage in millivolts.
-     *
-     * @return int 0 (ESP_OK) on success, or a non-zero esp_err_t error code on failure.
-     */
-    int ina219_get_shunt_voltage_mv(i2c_master_dev_handle_t dev_handle, int32_t *mV);
-
-    /**
      * @brief Read the shunt voltage and return the result in microvolts.
      *
      * The INA219 shunt voltage register LSB = 10 µV. This function converts the
