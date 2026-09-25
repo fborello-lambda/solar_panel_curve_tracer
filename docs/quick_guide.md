@@ -74,8 +74,7 @@ panel solar pequeño, calculando el punto de máxima potencia (MPP).
 - **Isc**: corriente de cortocircuito.
 - **MPP**: punto de máxima potencia (tensión y corriente).
 - La forma general de la curva indica el estado del panel.
-- Isc típica aprox. 50 mA, por lo que las lecturas resuelven en pasos de
-  aprox. 1 mA.
+- Setup de la práctica de laboratorio: Isc aprox. 50 mA, resolución aprox. 1 mA.
 
 ![Ejemplo de curva I-V](img/iv_example.png){width=34%}
 
@@ -150,7 +149,7 @@ small solar panel, computing the maximum power point (MPP).
 - **Isc**: short-circuit current.
 - **MPP**: maximum power point (voltage and current).
 - Overall curve shape indicates the panel's condition.
-- Typical Isc is about 50 mA, so readings resolve to about 1 mA steps.
+- Lab practice setup: Isc about 50 mA, resolution about 1 mA.
 
 ![Example I-V curve](img/iv_example.png){width=34%}
 

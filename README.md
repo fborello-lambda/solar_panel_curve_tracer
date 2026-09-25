@@ -62,7 +62,7 @@ doubles the commanded load current until the panel collapses, which locates
 the knee of the curve without the operator dialling in a current range. The
 20 recorded points are then placed mostly across that knee (a coarse leg
 below it, most of the budget through it, a short tail up to Isc), so a small
-panel (Isc around 50 mA is typical on the bench) still gets a well-resolved
+panel (Isc is around 50 mA with the lab practice setup) still gets a well-resolved
 curve shape rather than 20 points all past the cliff. See
 [docs/quick_guide.md](docs/quick_guide.md) for an operator-facing walkthrough
 of using the device, printable as a two-page A4 quick guide (Spanish +
