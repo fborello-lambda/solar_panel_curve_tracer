@@ -8,7 +8,7 @@
 #include <esp_netif.h>
 #include <esp_http_server.h>
 
-#include "../utils/json_builder.h"
+#include "json_builder.h"
 #include "../db/db.h"
 
 /**

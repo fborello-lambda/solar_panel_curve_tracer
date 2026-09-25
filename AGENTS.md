@@ -33,6 +33,13 @@ main/
     server.c/h        # HTTP handlers: /, /data, /start-measurement, /ota, /ota/spiffs, /version, /wifi-config
   db/
     db.c/h            # Circular sample buffer (max 20 points), mutex-protected
+components/
+  sweep_plan          # Pure sweep math: per-step duty placement + auto-range state
+                       # machine. No hardware/FreeRTOS deps, so it builds on the
+                       # `linux` IDF target — this is what test/host/ exercises.
+  json_builder        # Pure JSON array serialiser for /data (also linux-target testable)
+test/host/            # Standalone ESP-IDF project, `linux` target, Unity host tests
+                       # for components/sweep_plan and components/json_builder
 spiffs/               # Static web files bundled into SPIFFS partition
   index.html / script.js / chart.umd.min.js / ota.html
 partitions.csv        # Custom flash layout (see below)
@@ -101,6 +108,26 @@ idf.py flash monitor
 ```
 
 `sdkconfig` is generated from `sdkconfig.defaults` — do not commit `sdkconfig`.
+
+---
+
+## Tests
+
+Host unit tests cover the pure sweep math in `components/sweep_plan` (duty
+placement in `sweep_plan_build`, the auto-range state machine in
+`sweep_range_*`) and the JSON serialiser in `components/json_builder`. They
+run on the ESP-IDF `linux` target via Unity, with no ESP32 hardware and no
+QEMU, and are wired into CI as the `host-tests` job.
+
+```sh
+cd test/host
+idf.py --preview set-target linux   # once, or after switching from another target
+idf.py build
+./build/host_tests.elf              # exit code is Unity's failure count
+```
+
+The firmware itself is only compile-checked in CI (`idf.py build` at the
+repo root); it has no on-device test harness.
 
 ---
 
