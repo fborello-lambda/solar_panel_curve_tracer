@@ -1,0 +1,2 @@
+# Minimal config for the linux target host test app.
+CONFIG_IDF_TARGET_LINUX=y
