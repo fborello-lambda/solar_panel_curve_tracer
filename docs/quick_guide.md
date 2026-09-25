@@ -6,6 +6,8 @@ header-includes: |
   \usepackage{titlesec}
   \usepackage{enumitem}
   \usepackage{float}
+  \usepackage{caption}
+  \captionsetup{labelformat=empty}
   \floatplacement{figure}{H}
   \setlength{\textfloatsep}{4pt}
   \setlength{\intextsep}{2pt}
@@ -75,7 +77,7 @@ panel solar pequeño, calculando el punto de máxima potencia (MPP).
 - Isc típica aprox. 50 mA, por lo que las lecturas resuelven en pasos de
   aprox. 1 mA.
 
-![Ejemplo de curva I-V](img/iv_example.png){width=32%}
+![Ejemplo de curva I-V](img/iv_example.png){width=34%}
 
 ## Consejos
 
@@ -150,7 +152,7 @@ small solar panel, computing the maximum power point (MPP).
 - Overall curve shape indicates the panel's condition.
 - Typical Isc is about 50 mA, so readings resolve to about 1 mA steps.
 
-![Example I-V curve](img/iv_example.png){width=32%}
+![Example I-V curve](img/iv_example.png){width=34%}
 
 ## Tips
 
