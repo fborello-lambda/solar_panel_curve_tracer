@@ -23,6 +23,9 @@ void dynamic_load_adjust(int dir)
     if (!g_app.pwm_ready)
         return;
 
+    if (g_app.measurement_running)
+        return;
+
     if (dir > 0 && g_app.dynamic_measured_valid)
     {
         float near_limit_mW = LOAD_POWER_LIMIT_MW - LOAD_POWER_NEAR_MARGIN_MW;
@@ -127,6 +130,9 @@ void dynamic_load_update_measured(void)
 
 void dynamic_load_enter(void)
 {
+    if (g_app.measurement_running)
+        return;
+
     g_app.dynamic_load_active = true;
     g_app.dynamic_power_limited = false;
     g_app.dynamic_power_mW = 0.0f;
