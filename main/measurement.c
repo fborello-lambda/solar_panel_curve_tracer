@@ -18,27 +18,21 @@
 #include "driver_ina219.h"
 #include "led_controller.h"
 #include "pwm_controller.h"
+#include "sweep_plan.h"
 
 static const char *TAG = "MEASURE";
 
-// ── auto-range / sweep tunables ─────────────────────────────────────────
-// See AGENTS.md "Key design patterns" for the shape of the algorithm this
-// backs: a Voc probe, a doubling search for the knee, then 20 points placed
-// mostly across that knee. Ported from a sibling Rust implementation that
-// runs the same PWM -> RC -> VCCS -> MOSFET hardware design.
+// ── sweep I/O tunables ───────────────────────────────────────────────────
+// The algorithm tunables (duty placement, auto-range thresholds) live in
+// components/sweep_plan/include/sweep_plan.h, where they're testable on the
+// host. See AGENTS.md "Key design patterns" for the shape of the algorithm:
+// a Voc probe, a doubling search for the knee, then 20 points placed mostly
+// across that knee. Ported from a sibling Rust implementation that runs the
+// same PWM -> RC -> VCCS -> MOSFET hardware design.
 
-#define SWEEP_PROBE_START_DUTY 8         // first duty the doubling search tries
-#define SWEEP_COLLAPSE_PERCENT_OF_VOC 15 // panel counts as collapsed below this % of Voc
-#define SWEEP_DUTY_MAX_PERCENT 20        // hard ceiling on commanded duty, % of pwm_res
-#define SWEEP_KNEE_HEADROOM_PERCENT 115  // sweep top = knee * this / 100
 #define SWEEP_SETTLE_MS 250              // settle time after a duty step before sampling
 #define SWEEP_FIRST_POINT_SETTLE_MS 1000 // longer settle for the true open-circuit point
 #define SWEEP_SAMPLE_WINDOW_MS 100       // averaging window, an integer number of 50/60 Hz half-cycles
-#define SWEEP_VOC_MIN_MV 500             // below this, no panel worth sweeping
-#define SWEEP_FINE_LEG_POINTS 12         // points spent across the knee band
-#define SWEEP_TAIL_LEG_POINTS 2          // points spent from the knee band to top
-#define SWEEP_FINE_BAND_START_PERCENT 85 // fine band start, % of knee duty
-#define SWEEP_FINE_BAND_END_PERCENT 102  // fine band end, % of knee duty
 #define SWEEP_STOP_POLL_MS 25            // chunk size for waits, so stop is honored quickly
 
 static curve_producer_mode_t s_producer_mode = CURVE_PRODUCER_REAL;
@@ -230,40 +224,6 @@ static void producer_finish(const char *task_name)
     ESP_LOGI(TAG, "%s: Deleting self", task_name);
 }
 
-// ── sweep point placement ───────────────────────────────────────────────
-
-// Commanded duty for sweep step `step`, given the auto-ranged `top` and the
-// `knee` duty it was derived from. Three legs, not a linear ramp: a coarse
-// leg over the flat below-knee region (a panel there is a current source, so
-// coarse steps lose little), most of the budget across the knee band where
-// the curve actually bends, and a short tail up to `top` to pin Isc. Step 0
-// is always duty 0, the last step is always exactly `top`.
-static uint32_t sweep_duty_for_step(int step, uint32_t top, uint32_t knee)
-{
-    const int coarse_points = DB_MAX_SAMPLES - SWEEP_FINE_LEG_POINTS - SWEEP_TAIL_LEG_POINTS;
-    uint32_t band_start = knee * SWEEP_FINE_BAND_START_PERCENT / 100;
-    uint32_t band_end = knee * SWEEP_FINE_BAND_END_PERCENT / 100;
-    if (band_end > top)
-        band_end = top;
-
-    if (step < coarse_points)
-    {
-        return (uint32_t)((uint64_t)step * band_start / coarse_points);
-    }
-    else if (step < coarse_points + SWEEP_FINE_LEG_POINTS)
-    {
-        uint32_t fine_step = (uint32_t)(step - coarse_points);
-        uint32_t span = (band_end > band_start) ? (band_end - band_start) : 0;
-        return band_start + (uint32_t)((uint64_t)fine_step * span / (SWEEP_FINE_LEG_POINTS - 1));
-    }
-    else
-    {
-        uint32_t tail_step = (uint32_t)(step - coarse_points - SWEEP_FINE_LEG_POINTS + 1);
-        uint32_t span = (top > band_end) ? (top - band_end) : 0;
-        return band_end + (uint32_t)((uint64_t)tail_step * span / SWEEP_TAIL_LEG_POINTS);
-    }
-}
-
 // ── point measurement ────────────────────────────────────────────────────
 
 typedef enum
@@ -361,9 +321,8 @@ static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms,
 // a safety breach).
 static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, float *out_voc_mv)
 {
-    uint32_t hard_max = pwm_res * SWEEP_DUTY_MAX_PERCENT / 100;
-    if (hard_max < 1)
-        hard_max = 1;
+    sweep_range_t sr;
+    sweep_range_begin(&sr, pwm_res, DB_MAX_SAMPLES);
 
     float voc_v, dummy_i, dummy_p;
     measure_result_t r = measure_point(0, SWEEP_SETTLE_MS, &voc_v, &dummy_i, &dummy_p);
@@ -372,83 +331,48 @@ static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, 
 
     float voc_mV = voc_v * 1000.0f;
     *out_voc_mv = voc_mV;
-    if (voc_mV < SWEEP_VOC_MIN_MV)
+
+    if (!sweep_range_on_voc(&sr, voc_mV))
     {
         ESP_LOGW(TAG, "auto_range: Voc %.0f mV below %d mV, no panel to sweep (dark, disconnected)",
                  voc_mV, SWEEP_VOC_MIN_MV);
         return false;
     }
 
-    float collapse_mV = voc_mV * SWEEP_COLLAPSE_PERCENT_OF_VOC / 100.0f;
-
     // Ascending doubling search only: the RC filter that turns this PWM
     // duty into an analog setpoint is slow next to a probe's settle window,
     // so a probe walking duty DOWN would still read the previous, higher
     // duty's current draining out of the filter rather than its own.
-    uint32_t lo = 0;
-    float lo_i_mA = 0.0f; // stores lo's measured current, as float mA
-    uint32_t knee = 0;
-    uint32_t duty = (SWEEP_PROBE_START_DUTY < hard_max) ? SWEEP_PROBE_START_DUTY : hard_max;
-
     for (;;)
     {
         float v, i_mA, p_mW;
-        r = measure_point(duty, SWEEP_SETTLE_MS, &v, &i_mA, &p_mW);
+        r = measure_point(sr.duty, SWEEP_SETTLE_MS, &v, &i_mA, &p_mW);
         if (r != MEASURE_OK)
             return false;
 
         float v_mV = v * 1000.0f;
-        ESP_LOGI(TAG, "auto_range: probe duty=%lu -> V=%.0f mV I=%.1f mA", (unsigned long)duty, v_mV, i_mA);
+        ESP_LOGI(TAG, "auto_range: probe duty=%lu -> V=%.0f mV I=%.1f mA", (unsigned long)sr.duty, v_mV, i_mA);
 
-        if (v_mV <= collapse_mV)
-        {
-            float isc_mA = i_mA;
-            if (lo == 0 || lo_i_mA <= 0.5f)
-            {
-                // Collapsed on the very first loaded probe: no regulating
-                // point to scale from, so fall back to the collapsing duty.
-                knee = duty;
-            }
-            else
-            {
-                knee = (uint32_t)((isc_mA * (float)lo) / lo_i_mA);
-                if (knee > hard_max)
-                    knee = hard_max;
-            }
-            ESP_LOGI(TAG, "auto_range: collapsed at duty %lu, Isc=%.1f mA, %.1f mA per 1000 duty steps, knee at duty %lu",
-                     (unsigned long)duty, isc_mA,
-                     lo ? (double)((lo_i_mA * 1000.0f) / (float)lo) : 0.0,
-                     (unsigned long)knee);
+        if (sweep_range_on_probe(&sr, v_mV, i_mA))
             break;
-        }
-
-        lo = duty;
-        lo_i_mA = i_mA;
-        if (duty >= hard_max)
-            break;
-        duty = (duty * 2 < hard_max) ? duty * 2 : hard_max;
     }
 
-    if (knee == 0)
+    if (!sr.collapsed)
     {
         ESP_LOGW(TAG, "auto_range: never collapsed up to the %d%% duty cap, curve will stop short of Isc",
                  SWEEP_DUTY_MAX_PERCENT);
-        *out_top = hard_max;
-        *out_knee = hard_max * 100 / SWEEP_KNEE_HEADROOM_PERCENT;
-        return true;
+    }
+    else
+    {
+        ESP_LOGI(TAG, "auto_range: collapsed, Isc=%.1f mA, knee at duty %lu",
+                 (double)sr.isc_mA, (unsigned long)sr.knee);
     }
 
-    uint32_t top = (uint32_t)(((uint64_t)knee * SWEEP_KNEE_HEADROOM_PERCENT) / 100);
-    if (top > hard_max)
-        top = hard_max;
-    if (top < DB_MAX_SAMPLES)
-        top = DB_MAX_SAMPLES;
-
     ESP_LOGI(TAG, "auto_range: Voc=%.0f mV, knee at duty %lu, sweeping 0..%lu",
-             voc_mV, (unsigned long)knee, (unsigned long)top);
+             voc_mV, (unsigned long)sr.knee, (unsigned long)sr.top);
 
-    *out_top = top;
-    *out_knee = knee;
+    *out_top = sr.top;
+    *out_knee = sr.knee;
     return true;
 }
 
@@ -520,7 +444,9 @@ static void producer_task(void *arg)
     ESP_LOGI(TAG, "producer_task: Starting data production (top=%lu knee=%lu)",
              (unsigned long)top, (unsigned long)knee);
 
-    uint32_t prev_duty = 0;
+    uint32_t duties[DB_MAX_SAMPLES];
+    sweep_plan_build(top, knee, duties, DB_MAX_SAMPLES);
+
     for (int step = 0; step < DB_MAX_SAMPLES; step++)
     {
         if (g_app.measurement_stop_requested)
@@ -529,17 +455,7 @@ static void producer_task(void *arg)
             break;
         }
 
-        uint32_t duty = sweep_duty_for_step(step, top, knee);
-        if (step > 0 && duty <= prev_duty)
-            duty = prev_duty + 1;
-        // Leave room for every remaining step to still strictly increase up
-        // to `top`, so the bump above never crowds the final points.
-        int steps_left = DB_MAX_SAMPLES - 1 - step;
-        if (steps_left > 0 && duty > top - (uint32_t)steps_left)
-            duty = top - (uint32_t)steps_left;
-        if (step == DB_MAX_SAMPLES - 1)
-            duty = top;
-        prev_duty = duty;
+        uint32_t duty = duties[step];
 
         // Step 0 (duty 0) after auto-range's high-duty last probe needs a
         // longer settle so it reads a true open-circuit voltage instead of
