@@ -19,7 +19,6 @@ typedef enum
     UI_SCREEN_MENU,
     UI_SCREEN_ACTION_QR,
     UI_SCREEN_ACTION_MEASURE,
-    UI_SCREEN_ACTION_SYSTEM,
     UI_SCREEN_ACTION_DYNAMIC_LOAD,
 } ui_screen_t;
 
@@ -63,7 +62,6 @@ typedef struct
     int ui_home_index;
     int ui_menu_index;
     int ui_measure_index;
-    int ui_system_index;
     bool dynamic_load_active;
     float dynamic_measured_mA;
     float dynamic_power_mW;
@@ -78,8 +76,6 @@ typedef struct
 } app_state_t;
 
 extern app_state_t g_app;
-
-#define MAX_MEASUREMENTS_PER_CYCLE 10
 
 #define I2C_PORT I2C_NUM_0
 #define I2C_SDA_GPIO GPIO_NUM_6

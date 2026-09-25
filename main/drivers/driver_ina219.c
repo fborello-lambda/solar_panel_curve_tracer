@@ -214,20 +214,6 @@ int ina219_calibrate_for_32V_2A(i2c_master_dev_handle_t dev_handle, ina219_cal_t
     return ESP_OK;
 }
 
-/* Read shunt voltage (milivolts) */
-int ina219_get_shunt_voltage_mv(i2c_master_dev_handle_t dev_handle, int32_t *mV)
-{
-    if (mV == NULL)
-        return ESP_ERR_INVALID_ARG;
-    uint16_t raw;
-    int ret = ina219_read_register(dev_handle, INA219_REG_SHUNTVOLTAGE, &raw);
-    if (ret != ESP_OK)
-        return ret;
-    int16_t s = (int16_t)raw;
-    *mV = (int32_t)s * 0.01;
-    return ESP_OK;
-}
-
 /* Read shunt voltage (microvolts) */
 int ina219_get_shunt_voltage_uv(i2c_master_dev_handle_t dev_handle, int32_t *uV)
 {

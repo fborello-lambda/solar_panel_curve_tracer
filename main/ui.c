@@ -15,6 +15,7 @@
 
 #include "app/app_state.h"
 #include "app/app_tasks.h"
+#include "dynamic_load.h"
 #include "measurement.h"
 
 #include "driver_sh1106.h"
@@ -171,7 +172,6 @@ void ui_init_state(void)
     g_app.ui_home_index = HOME_SECTION_NETWORK;
     g_app.ui_menu_index = 0;
     g_app.ui_measure_index = 0;
-    g_app.ui_system_index = 0;
 
     g_app.dynamic_load_active = false;
     g_app.dynamic_duty_steps = 0;
@@ -206,13 +206,6 @@ void ui_on_rotate(int dir)
     if (g_app.ui_screen == UI_SCREEN_ACTION_MEASURE)
     {
         g_app.ui_measure_index = wrap_index(g_app.ui_measure_index + dir, 3);
-        app_display_mark_dirty();
-        return;
-    }
-
-    if (g_app.ui_screen == UI_SCREEN_ACTION_SYSTEM)
-    {
-        g_app.ui_system_index = wrap_index(g_app.ui_system_index + dir, 4);
         app_display_mark_dirty();
         return;
     }
@@ -327,32 +320,6 @@ void ui_on_button(void)
             measurement_set_producer_mode(next_mode);
             ESP_LOGI(TAG, "Curve tracer mode set to %s", measurement_get_producer_mode_label());
             app_display_mark_dirty();
-            return;
-        }
-
-        ui_set_screen(UI_SCREEN_MENU);
-        return;
-    }
-
-    if (g_app.ui_screen == UI_SCREEN_ACTION_SYSTEM)
-    {
-        if (g_app.ui_system_index == 0)
-        {
-            enter_deep_sleep_mode();
-            return;
-        }
-
-        if (g_app.ui_system_index == 1)
-        {
-            ESP_LOGI(TAG, "SYSTEM: restart requested");
-            esp_restart();
-            return;
-        }
-
-        if (g_app.ui_system_index == 2)
-        {
-            g_app.ui_qr_kind = UI_QR_OTA;
-            ui_set_screen(UI_SCREEN_ACTION_QR);
             return;
         }
 
@@ -625,35 +592,4 @@ void ui_render_display_frame(uint8_t *fb)
         return;
     }
 
-    if (g_app.ui_screen == UI_SCREEN_ACTION_SYSTEM)
-    {
-        char ver_line[48] = {0};
-        char sleep_line[24] = {0};
-        char restart_line[24] = {0};
-        char ota_line[24] = {0};
-        char back_line[24] = {0};
-
-        const esp_app_desc_t *desc = esp_app_get_description();
-        snprintf(ver_line, sizeof(ver_line), "SYS v%s", desc->version);
-        snprintf(sleep_line, sizeof(sleep_line), "%s DEEP SLEEP",
-                 g_app.ui_system_index == 0 ? ">>" : "  ");
-        snprintf(restart_line, sizeof(restart_line), "%s RESTART",
-                 g_app.ui_system_index == 1 ? ">>" : "  ");
-        snprintf(ota_line, sizeof(ota_line), "%s OTA UPDATE",
-                 g_app.ui_system_index == 2 ? ">>" : "  ");
-        snprintf(back_line, sizeof(back_line), "%s BACK",
-                 g_app.ui_system_index == 3 ? ">>" : "  ");
-
-        sh1106_fb_draw_text(fb, 0, 0, ver_line);
-        sh1106_fb_draw_text(fb, 0, 14, sleep_line);
-        sh1106_fb_draw_text(fb, 0, 28, restart_line);
-        sh1106_fb_draw_text(fb, 0, 42, ota_line);
-        sh1106_fb_draw_text(fb, 0, 56, back_line);
-        return;
-    }
-
-    sh1106_fb_draw_text(fb, 0, 8, "MEASURE");
-    sh1106_fb_draw_text(fb, 0, 24, measurement_is_running() ? "STATE: RUNNING" : "STATE: STOPPED");
-    sh1106_fb_draw_text(fb, 0, 40, "BTN BACK");
-    sh1106_fb_draw_text(fb, 0, 52, "USE MENU START/STOP");
 }
