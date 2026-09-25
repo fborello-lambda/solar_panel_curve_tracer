@@ -4,6 +4,7 @@
 #include <stdio.h>
 
 #include <esp_log.h>
+#include <esp_timer.h>
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -20,15 +21,31 @@
 
 static const char *TAG = "MEASURE";
 
+// ── auto-range / sweep tunables ─────────────────────────────────────────
+// See AGENTS.md "Key design patterns" for the shape of the algorithm this
+// backs: a Voc probe, a doubling search for the knee, then 20 points placed
+// mostly across that knee. Ported from a sibling Rust implementation that
+// runs the same PWM -> RC -> VCCS -> MOSFET hardware design.
+
+#define SWEEP_PROBE_START_DUTY 8         // first duty the doubling search tries
+#define SWEEP_COLLAPSE_PERCENT_OF_VOC 15 // panel counts as collapsed below this % of Voc
+#define SWEEP_DUTY_MAX_PERCENT 20        // hard ceiling on commanded duty, % of pwm_res
+#define SWEEP_KNEE_HEADROOM_PERCENT 115  // sweep top = knee * this / 100
+#define SWEEP_SETTLE_MS 250              // settle time after a duty step before sampling
+#define SWEEP_FIRST_POINT_SETTLE_MS 1000 // longer settle for the true open-circuit point
+#define SWEEP_SAMPLE_WINDOW_MS 100       // averaging window, an integer number of 50/60 Hz half-cycles
+#define SWEEP_VOC_MIN_MV 500             // below this, no panel worth sweeping
+#define SWEEP_FINE_LEG_POINTS 12         // points spent across the knee band
+#define SWEEP_TAIL_LEG_POINTS 2          // points spent from the knee band to top
+#define SWEEP_FINE_BAND_START_PERCENT 85 // fine band start, % of knee duty
+#define SWEEP_FINE_BAND_END_PERCENT 102  // fine band end, % of knee duty
+#define SWEEP_STOP_POLL_MS 25            // chunk size for waits, so stop is honored quickly
+
 static curve_producer_mode_t s_producer_mode = CURVE_PRODUCER_REAL;
 
 static void measurement_apply_state_locked(bool running);
 static bool measurement_start_locked(void);
 static bool measurement_stop_locked(void);
-
-static void dynamic_load_set_duty(uint32_t duty_steps);
-
-static uint32_t calculate_step_size(float max_scale_current_mA, float desired_range_mA, uint32_t number_of_measurements, uint32_t pwm_resolution);
 
 static void dummy_producer_task(void *arg);
 static void producer_task(void *arg);
@@ -91,143 +108,6 @@ curve_producer_mode_t measurement_get_producer_mode(void)
 const char *measurement_get_producer_mode_label(void)
 {
     return (s_producer_mode == CURVE_PRODUCER_DUMMY) ? "DEMO" : "REAL";
-}
-
-void dynamic_load_adjust(int dir)
-{
-    if (!g_app.pwm_ready)
-        return;
-
-    if (dir > 0 && g_app.dynamic_measured_valid)
-    {
-        float near_limit_mW = LOAD_POWER_LIMIT_MW - LOAD_POWER_NEAR_MARGIN_MW;
-        if (g_app.dynamic_power_mW >= near_limit_mW)
-        {
-            g_app.dynamic_power_limited = true;
-            ESP_LOGW(TAG, "dynamic_load: power near limit (%.0f mW), blocking duty increase", g_app.dynamic_power_mW);
-            return;
-        }
-    }
-    if (dir < 0)
-    {
-        g_app.dynamic_power_limited = false;
-    }
-
-    int32_t new_duty = (int32_t)g_app.dynamic_duty_steps + (dir * DYNAMIC_LOAD_DUTY_STEP);
-    if (new_duty < 0)
-        new_duty = 0;
-
-    dynamic_load_set_duty((uint32_t)new_duty);
-}
-
-void dynamic_load_update_measured(void)
-{
-    if (!g_app.ina_ready)
-    {
-        g_app.dynamic_measured_valid = false;
-        return;
-    }
-
-    TickType_t now = xTaskGetTickCount();
-    if ((now - g_app.dynamic_last_sample_tick) < pdMS_TO_TICKS(DYNAMIC_LOAD_UPDATE_MS))
-    {
-        return;
-    }
-
-    if ((now - g_app.dynamic_last_adjust_tick) < pdMS_TO_TICKS(DYNAMIC_LOAD_SETTLE_MS))
-    {
-        return;
-    }
-
-    g_app.dynamic_last_sample_tick = now;
-
-    int32_t sum_mA = 0;
-    int32_t sum_bus_mv = 0;
-    int32_t sum_shunt_uv = 0;
-    int valid = 0;
-    for (int n = 0; n < DYNAMIC_LOAD_SAMPLE_COUNT; n++)
-    {
-        int32_t raw_mA = 0, bus_mv = 0, shunt_uv = 0;
-        bool ok = ina219_get_current_ma(g_app.ina_dev, &g_app.ina_cal, &raw_mA) == ESP_OK;
-        ok &= ina219_get_bus_voltage_mv(g_app.ina_dev, &bus_mv) == ESP_OK;
-        ok &= ina219_get_shunt_voltage_uv(g_app.ina_dev, &shunt_uv) == ESP_OK;
-        if (ok)
-        {
-            sum_mA += raw_mA;
-            sum_bus_mv += bus_mv;
-            sum_shunt_uv += shunt_uv;
-            valid++;
-        }
-        vTaskDelay(pdMS_TO_TICKS(2));
-    }
-
-    if (valid > 0)
-    {
-        float avg_signed_mA = (float)sum_mA / (float)valid;
-        float avg_mA = fabsf(avg_signed_mA);
-        float avg_bus_mV = (float)sum_bus_mv / (float)valid;
-
-        g_app.dynamic_measured_mA = (avg_mA < 3.0f) ? 0.0f : avg_mA;
-        g_app.dynamic_bus_mv = sum_bus_mv / valid;
-        g_app.dynamic_shunt_uv = sum_shunt_uv / valid;
-        g_app.dynamic_power_mW = (g_app.dynamic_measured_mA * avg_bus_mV) / 1000.0f;
-        g_app.dynamic_measured_valid = true;
-
-        if (g_app.dynamic_power_mW >= LOAD_POWER_LIMIT_MW)
-        {
-            g_app.dynamic_power_limited = true;
-            if (g_app.dynamic_duty_steps > 0)
-            {
-                uint32_t reduced_duty = (g_app.dynamic_duty_steps > DYNAMIC_LOAD_DUTY_STEP)
-                                            ? (g_app.dynamic_duty_steps - DYNAMIC_LOAD_DUTY_STEP)
-                                            : 0;
-                ESP_LOGW(TAG, "dynamic_load: power limit reached (%.0f mW), backing off duty %lu -> %lu",
-                         g_app.dynamic_power_mW,
-                         (unsigned long)g_app.dynamic_duty_steps,
-                         (unsigned long)reduced_duty);
-                dynamic_load_set_duty(reduced_duty);
-            }
-        }
-        else if (g_app.dynamic_power_mW < (LOAD_POWER_LIMIT_MW - LOAD_POWER_NEAR_MARGIN_MW))
-        {
-            g_app.dynamic_power_limited = false;
-        }
-    }
-    else
-    {
-        g_app.dynamic_measured_valid = false;
-        g_app.dynamic_power_mW = 0.0f;
-    }
-}
-
-void dynamic_load_enter(void)
-{
-    g_app.dynamic_load_active = true;
-    g_app.dynamic_power_limited = false;
-    g_app.dynamic_power_mW = 0.0f;
-    g_app.dynamic_last_adjust_tick = xTaskGetTickCount();
-    g_app.dynamic_last_sample_tick = 0;
-
-    dynamic_load_set_duty(0);
-    dynamic_load_update_measured();
-    app_display_mark_dirty();
-}
-
-void dynamic_load_exit(void)
-{
-    g_app.dynamic_load_active = false;
-    g_app.dynamic_measured_valid = false;
-    g_app.dynamic_measured_mA = 0.0f;
-    g_app.dynamic_power_mW = 0.0f;
-    g_app.dynamic_bus_mv = 0;
-    g_app.dynamic_shunt_uv = 0;
-    g_app.dynamic_power_limited = false;
-    g_app.dynamic_duty_steps = 0;
-    if (g_app.pwm_ready)
-    {
-        pwm_controller_set_duty(0);
-    }
-    app_display_mark_dirty();
 }
 
 bool measurement_init_load_control_hw(bool strict_mode)
@@ -325,59 +205,6 @@ static bool measurement_stop_locked(void)
     return true;
 }
 
-static void dynamic_load_set_duty(uint32_t duty_steps)
-{
-    if (!g_app.pwm_ready)
-    {
-        g_app.dynamic_duty_steps = 0;
-        g_app.dynamic_last_adjust_tick = xTaskGetTickCount();
-        return;
-    }
-
-    uint32_t pwm_res = 0;
-    if (pwm_controller_get_resolution(&pwm_res) != 0 || pwm_res == 0)
-    {
-        ESP_LOGW(TAG, "dynamic_load: failed to read PWM resolution");
-        return;
-    }
-
-    uint32_t max_duty = (uint32_t)((DYNAMIC_LOAD_DUTY_MAX_PERCENT / 100.0f) * (float)pwm_res);
-    if (duty_steps > max_duty)
-        duty_steps = max_duty;
-
-    if (pwm_controller_set_duty_in_res_steps(duty_steps) != 0)
-    {
-        ESP_LOGW(TAG, "dynamic_load: failed to apply PWM duty=%lu", (unsigned long)duty_steps);
-        return;
-    }
-
-    g_app.dynamic_duty_steps = duty_steps;
-    g_app.dynamic_last_adjust_tick = xTaskGetTickCount();
-}
-
-// The max_scale_current_mA is the maximum current the system can provide.
-// It's determined in the notebook analysis and is a constant. It depends on various factors
-// like the shunt resistor, the INA219 calibration, the power supply, etc.
-// The desired_range_mA is the current setpoint the user wants to reach. It can be changed by the user.
-static uint32_t calculate_step_size(float max_scale_current_mA, float desired_range_mA, uint32_t number_of_measurements, uint32_t pwm_resolution)
-{
-    if (max_scale_current_mA == 0)
-        return 1; // at least 1 mA step
-
-    // Calculate step size to reach max_current_mA in given number of measurements
-    float step_f = ((float)pwm_resolution * desired_range_mA) / (max_scale_current_mA * (float)(number_of_measurements - 1));
-
-    ESP_LOGI(TAG, "calculate_step_size: max_scale_current_mA=%.3f desired_range_mA=%.3f number_of_measurements=%d pwm_resolution=%d => step_f=%.3f",
-             max_scale_current_mA, desired_range_mA, number_of_measurements, pwm_resolution, step_f);
-    if (step_f > (float)pwm_resolution)
-        step_f = (float)pwm_resolution;
-
-    uint32_t step = (uint32_t)(step_f + 0.5f);
-    if (step == 0)
-        step = 1; // never stall the sweep for a positive range
-    return step;
-}
-
 static void producer_finish(const char *task_name)
 {
     if (g_app.state_mtx && xSemaphoreTake(g_app.state_mtx, pdMS_TO_TICKS(10)) == pdTRUE)
@@ -395,6 +222,220 @@ static void producer_finish(const char *task_name)
     }
 
     ESP_LOGI(TAG, "%s: Deleting self", task_name);
+}
+
+// ── sweep point placement ───────────────────────────────────────────────
+
+// Commanded duty for sweep step `step`, given the auto-ranged `top` and the
+// `knee` duty it was derived from. Three legs, not a linear ramp: a coarse
+// leg over the flat below-knee region (a panel there is a current source, so
+// coarse steps lose little), most of the budget across the knee band where
+// the curve actually bends, and a short tail up to `top` to pin Isc. Step 0
+// is always duty 0, the last step is always exactly `top`.
+static uint32_t sweep_duty_for_step(int step, uint32_t top, uint32_t knee)
+{
+    const int coarse_points = DB_MAX_SAMPLES - SWEEP_FINE_LEG_POINTS - SWEEP_TAIL_LEG_POINTS;
+    uint32_t band_start = knee * SWEEP_FINE_BAND_START_PERCENT / 100;
+    uint32_t band_end = knee * SWEEP_FINE_BAND_END_PERCENT / 100;
+    if (band_end > top)
+        band_end = top;
+
+    if (step < coarse_points)
+    {
+        return (uint32_t)((uint64_t)step * band_start / coarse_points);
+    }
+    else if (step < coarse_points + SWEEP_FINE_LEG_POINTS)
+    {
+        uint32_t fine_step = (uint32_t)(step - coarse_points);
+        uint32_t span = (band_end > band_start) ? (band_end - band_start) : 0;
+        return band_start + (uint32_t)((uint64_t)fine_step * span / (SWEEP_FINE_LEG_POINTS - 1));
+    }
+    else
+    {
+        uint32_t tail_step = (uint32_t)(step - coarse_points - SWEEP_FINE_LEG_POINTS + 1);
+        uint32_t span = (top > band_end) ? (top - band_end) : 0;
+        return band_end + (uint32_t)((uint64_t)tail_step * span / SWEEP_TAIL_LEG_POINTS);
+    }
+}
+
+// ── point measurement ────────────────────────────────────────────────────
+
+typedef enum
+{
+    MEASURE_OK = 0,
+    MEASURE_STOP_REQUESTED,
+    MEASURE_NO_VALID_READS,
+    MEASURE_POWER_LIMIT,
+} measure_result_t;
+
+// Sleeps `ms` in small chunks, checking the cooperative stop flag between
+// each chunk so a stop request is honored within roughly SWEEP_STOP_POLL_MS.
+// Returns true if a stop was requested during the wait.
+static bool sleep_chunked_checking_stop(uint32_t ms)
+{
+    uint32_t waited = 0;
+    while (waited < ms)
+    {
+        if (g_app.measurement_stop_requested)
+            return true;
+        uint32_t chunk = (ms - waited < SWEEP_STOP_POLL_MS) ? (ms - waited) : SWEEP_STOP_POLL_MS;
+        vTaskDelay(pdMS_TO_TICKS(chunk));
+        waited += chunk;
+    }
+    return g_app.measurement_stop_requested;
+}
+
+// Commands `duty_steps`, settles for `settle_ms`, then averages bus/shunt
+// voltage readings over a fixed SWEEP_SAMPLE_WINDOW_MS window (sampled as
+// fast as I2C allows) — 100 ms spans an integer number of half-cycles of
+// both 50 Hz and 60 Hz mains flicker, so ripple from a lamp cancels out.
+// Used by both auto-range probes and recorded sweep points.
+static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms,
+                                       float *out_v, float *out_i_mA, float *out_power_mW)
+{
+    pwm_controller_set_duty_in_res_steps(duty_steps);
+
+    if (sleep_chunked_checking_stop(settle_ms))
+        return MEASURE_STOP_REQUESTED;
+
+    int64_t bus_mV_sum = 0;
+    int64_t shunt_uV_sum = 0;
+    int valid = 0;
+
+    int64_t window_start = esp_timer_get_time();
+    while ((esp_timer_get_time() - window_start) < (int64_t)SWEEP_SAMPLE_WINDOW_MS * 1000)
+    {
+        int32_t bus_mV = 0, shunt_uV = 0;
+        bool ok = ina219_get_bus_voltage_mv(g_app.ina_dev, &bus_mV) == ESP_OK;
+        ok &= ina219_get_shunt_voltage_uv(g_app.ina_dev, &shunt_uV) == ESP_OK;
+        if (ok)
+        {
+            bus_mV_sum += bus_mV;
+            shunt_uV_sum += shunt_uV;
+            valid++;
+        }
+    }
+
+    if (g_app.measurement_stop_requested)
+        return MEASURE_STOP_REQUESTED;
+
+    if (valid == 0)
+        return MEASURE_NO_VALID_READS;
+
+    float bus_mV = (float)bus_mV_sum / (float)valid;
+    float shunt_uV = (float)shunt_uV_sum / (float)valid;
+    int shunt_mOhm = g_app.ina_cal.shunt_resistor_mOhm;
+    float current_mA = (shunt_mOhm > 0) ? (shunt_uV / (float)shunt_mOhm) : 0.0f;
+    float voltage_mV = bus_mV - (shunt_uV / 1000.0f);
+
+    *out_v = voltage_mV / 1000.0f; // volts
+    *out_i_mA = current_mA;
+    *out_power_mW = (voltage_mV * current_mA) / 1000.0f;
+
+    if (*out_power_mW >= LOAD_POWER_LIMIT_MW)
+        return MEASURE_POWER_LIMIT;
+
+    return MEASURE_OK;
+}
+
+// ── auto-range ───────────────────────────────────────────────────────────
+
+// Finds this sweep's top duty by probing for Voc, then doubling the
+// commanded duty until the panel collapses (voltage drops below
+// SWEEP_COLLAPSE_PERCENT_OF_VOC of Voc). Probe points are not recorded in
+// db. Returns false if the sweep should abort (no panel, stop requested, or
+// a safety breach).
+static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, float *out_voc_mv)
+{
+    uint32_t hard_max = pwm_res * SWEEP_DUTY_MAX_PERCENT / 100;
+    if (hard_max < 1)
+        hard_max = 1;
+
+    float voc_v, dummy_i, dummy_p;
+    measure_result_t r = measure_point(0, SWEEP_SETTLE_MS, &voc_v, &dummy_i, &dummy_p);
+    if (r != MEASURE_OK)
+        return false;
+
+    float voc_mV = voc_v * 1000.0f;
+    *out_voc_mv = voc_mV;
+    if (voc_mV < SWEEP_VOC_MIN_MV)
+    {
+        ESP_LOGW(TAG, "auto_range: Voc %.0f mV below %d mV, no panel to sweep (dark, disconnected)",
+                 voc_mV, SWEEP_VOC_MIN_MV);
+        return false;
+    }
+
+    float collapse_mV = voc_mV * SWEEP_COLLAPSE_PERCENT_OF_VOC / 100.0f;
+
+    // Ascending doubling search only: the RC filter that turns this PWM
+    // duty into an analog setpoint is slow next to a probe's settle window,
+    // so a probe walking duty DOWN would still read the previous, higher
+    // duty's current draining out of the filter rather than its own.
+    uint32_t lo = 0;
+    uint32_t lo_i_mA_bits = 0; // stores lo's measured current, as an integer mA
+    uint32_t knee = 0;
+    uint32_t duty = (SWEEP_PROBE_START_DUTY < hard_max) ? SWEEP_PROBE_START_DUTY : hard_max;
+
+    for (;;)
+    {
+        float v, i_mA, p_mW;
+        r = measure_point(duty, SWEEP_SETTLE_MS, &v, &i_mA, &p_mW);
+        if (r != MEASURE_OK)
+            return false;
+
+        float v_mV = v * 1000.0f;
+        ESP_LOGI(TAG, "auto_range: probe duty=%lu -> V=%.0f mV I=%.1f mA", (unsigned long)duty, v_mV, i_mA);
+
+        if (v_mV <= collapse_mV)
+        {
+            uint32_t isc_mA = (uint32_t)(i_mA + 0.5f);
+            if (lo == 0 || lo_i_mA_bits == 0)
+            {
+                // Collapsed on the very first loaded probe: no regulating
+                // point to scale from, so fall back to the collapsing duty.
+                knee = duty;
+            }
+            else
+            {
+                knee = (uint32_t)(((uint64_t)isc_mA * lo) / lo_i_mA_bits);
+                if (knee > hard_max)
+                    knee = hard_max;
+            }
+            ESP_LOGI(TAG, "auto_range: collapsed at duty %lu, Isc=%lu mA, %lu mA per 1000 duty steps, knee at duty %lu",
+                     (unsigned long)duty, (unsigned long)isc_mA,
+                     lo ? (unsigned long)(((uint64_t)lo_i_mA_bits * 1000) / lo) : 0UL,
+                     (unsigned long)knee);
+            break;
+        }
+
+        lo = duty;
+        lo_i_mA_bits = (uint32_t)(i_mA + 0.5f);
+        if (duty >= hard_max)
+            break;
+        duty = (duty * 2 < hard_max) ? duty * 2 : hard_max;
+    }
+
+    if (knee == 0)
+    {
+        ESP_LOGW(TAG, "auto_range: never collapsed up to the %d%% duty cap, curve will stop short of Isc",
+                 SWEEP_DUTY_MAX_PERCENT);
+        *out_top = hard_max;
+        *out_knee = hard_max * 100 / SWEEP_KNEE_HEADROOM_PERCENT;
+        return true;
+    }
+
+    uint32_t top = (uint32_t)(((uint64_t)knee * SWEEP_KNEE_HEADROOM_PERCENT) / 100);
+    if (top > hard_max)
+        top = hard_max;
+    if (top < DB_MAX_SAMPLES)
+        top = DB_MAX_SAMPLES;
+
+    ESP_LOGI(TAG, "auto_range: Voc=%.0f mV, knee at duty %lu, sweeping 0..%lu",
+             voc_mV, (unsigned long)knee, (unsigned long)top);
+
+    *out_top = top;
+    *out_knee = knee;
+    return true;
 }
 
 static void dummy_producer_task(void *arg)
@@ -428,14 +469,12 @@ static void dummy_producer_task(void *arg)
             ESP_LOGI(TAG, "dummy_producer_task: db_add succeeded (x=%.3f,y=%.3f)", x_array[i], y_array[i]);
         }
 
-        vTaskDelay(pdMS_TO_TICKS(1000)); // hold each demo point ~1 s
-
         duty += 10;
         if (duty > 100)
             duty = 100;
 
         pwm_controller_set_duty(duty); // duty is a percentage (0..100)
-        vTaskDelay(pdMS_TO_TICKS(250));
+        vTaskDelay(pdMS_TO_TICKS(250)); // pace like a real sweep, ~250 ms/point
     }
 
     ESP_LOGI(TAG, "dummy_producer_task: Finished data production");
@@ -448,26 +487,25 @@ static void producer_task(void *arg)
 {
     (void)arg;
 
-    float desired_range_mA = db_get_current_setpoint_mA();
-    if (desired_range_mA <= 0.0f)
-    {
-        ESP_LOGW(TAG, "producer_task: setpoint <= 0, defaulting sweep range to MAX_CURRENT_MA (%.1f mA)", MAX_CURRENT_MA);
-        desired_range_mA = MAX_CURRENT_MA;
-    }
-    uint32_t pwm_res;
+    uint32_t pwm_res = 0;
     pwm_controller_get_resolution(&pwm_res);
 
-    uint32_t stepsize = calculate_step_size(MAX_CURRENT_MA, desired_range_mA, DB_MAX_SAMPLES, pwm_res);
-    ESP_LOGI(TAG, "producer_task: Calculated step size: %d || number of steps %d (desired_range=%.3f mA)", stepsize, DB_MAX_SAMPLES, desired_range_mA);
+    ESP_LOGI(TAG, "producer_task: starting auto-range");
 
-    uint32_t duty = 0;
+    uint32_t top = 0, knee = 0;
+    float voc_mV = 0.0f;
+    if (!auto_range(pwm_res, &top, &knee, &voc_mV))
+    {
+        ESP_LOGW(TAG, "producer_task: auto-range aborted, recording nothing");
+        producer_finish("producer_task");
+        vTaskDelete(NULL);
+        return;
+    }
 
-    pwm_controller_set_duty_in_res_steps(duty); // duty is in raw resolution steps (0..pwm_res)
-    vTaskDelay(pdMS_TO_TICKS(250));
+    ESP_LOGI(TAG, "producer_task: Starting data production (top=%lu knee=%lu)",
+             (unsigned long)top, (unsigned long)knee);
 
-    ESP_LOGI(TAG, "producer_task: Starting data production");
-
-    for (int i = 0; i < DB_MAX_SAMPLES; i++)
+    for (int step = 0; step < DB_MAX_SAMPLES; step++)
     {
         if (g_app.measurement_stop_requested)
         {
@@ -475,96 +513,43 @@ static void producer_task(void *arg)
             break;
         }
 
-        const int max_retries = 5;
-        int attempts = 0;
-        bool success = false;
+        uint32_t duty = sweep_duty_for_step(step, top, knee);
 
-        int64_t shunt_uV_sum = 0;
-        int64_t bus_mV_sum = 0;
-        int64_t current_mA_sum = 0;
-        int64_t power_mW_sum = 0;
-        int valid = 0;
+        // Step 0 (duty 0) after auto-range's high-duty last probe needs a
+        // longer settle so it reads a true open-circuit voltage instead of
+        // the RC filter still draining down.
+        uint32_t settle_ms = (step == 0) ? SWEEP_FIRST_POINT_SETTLE_MS : SWEEP_SETTLE_MS;
 
-        for (int j = 0; j < MAX_MEASUREMENTS_PER_CYCLE; j++)
+        float v, i_mA, p_mW;
+        measure_result_t r = measure_point(duty, settle_ms, &v, &i_mA, &p_mW);
+
+        if (r == MEASURE_STOP_REQUESTED)
         {
-            if (g_app.measurement_stop_requested)
-                break;
-
-            int32_t shunt_uV = 0;
-            int32_t bus_mV = 0;
-            int32_t current_mA = 0;
-            int32_t power_mW = 0;
-
-            bool ok = ina219_get_shunt_voltage_uv(g_app.ina_dev, &shunt_uV) == ESP_OK;
-            ok &= ina219_get_bus_voltage_mv(g_app.ina_dev, &bus_mV) == ESP_OK;
-            ok &= ina219_get_current_ma(g_app.ina_dev, &g_app.ina_cal, &current_mA) == ESP_OK;
-            ok &= ina219_get_power_mw(g_app.ina_dev, &g_app.ina_cal, &power_mW) == ESP_OK;
-
-            if (ok)
-            {
-                shunt_uV_sum += shunt_uV;
-                bus_mV_sum += bus_mV;
-                current_mA_sum += current_mA;
-                power_mW_sum += power_mW;
-                valid++;
-            }
-            else
-            {
-                ESP_LOGW(TAG, "driver_ina219: sample %d dropped (read failed)", j);
-            }
-
-            vTaskDelay(pdMS_TO_TICKS(1000 / MAX_MEASUREMENTS_PER_CYCLE));
+            ESP_LOGI(TAG, "producer_task: stop requested during step %d, ending sweep early", step);
+            break;
         }
-
-        if (valid == 0)
+        if (r == MEASURE_NO_VALID_READS)
         {
-            ESP_LOGW(TAG, "producer_task: no valid samples this step, advancing duty without recording point");
-            duty += stepsize;
-            if (duty > pwm_res)
-                duty = pwm_res;
-            pwm_controller_set_duty_in_res_steps(duty);
-            vTaskDelay(pdMS_TO_TICKS(250));
-            continue;
+            ESP_LOGW(TAG, "producer_task: no valid samples at step %d (duty=%lu), aborting sweep",
+                     step, (unsigned long)duty);
+            break;
         }
-
-        int32_t shunt_uV = (int32_t)(shunt_uV_sum / valid);
-        int32_t bus_mV = (int32_t)(bus_mV_sum / valid);
-        int32_t current_mA = (int32_t)(current_mA_sum / valid);
-        int32_t power_mW = (int32_t)(power_mW_sum / valid);
-
-        ESP_LOGI(TAG, "VBUS=%d mV  VSHUNT=%d uV  I=%d mA  P=%d mW",
-                 bus_mV, shunt_uV, current_mA, power_mW);
-
-        int32_t abs_power_mW = (power_mW < 0) ? -power_mW : power_mW;
-        float near_limit_mW = LOAD_POWER_LIMIT_MW - LOAD_POWER_NEAR_MARGIN_MW;
-        if ((float)abs_power_mW >= near_limit_mW)
+        if (r == MEASURE_POWER_LIMIT)
         {
-            ESP_LOGW(TAG, "producer_task: power near limit (%ld mW), stopping sweep to protect load",
-                     (long)abs_power_mW);
+            ESP_LOGW(TAG, "producer_task: power limit reached (%.0f mW >= %.0f mW) at step %d, aborting sweep",
+                     p_mW, (float)LOAD_POWER_LIMIT_MW, step);
             break;
         }
 
-        float v = (bus_mV - (shunt_uV / 1000.0f)) / 1000.0f;
-        float i = (float)current_mA;
-
-        while (!(success = db_add(v, i)) && attempts++ < max_retries)
+        if (!db_add(v, i_mA))
         {
-            vTaskDelay(pdMS_TO_TICKS(100));
+            ESP_LOGW(TAG, "producer_task: db_add failed, dropping sample (v=%.3f,i=%.3f)", v, i_mA);
         }
-
-        if (!success)
+        else
         {
-            ESP_LOGW(TAG, "producer_task: db_add failed after %d attempts, dropping sample (v=%.3f,i=%.3f)", attempts, v, i);
+            ESP_LOGI(TAG, "producer_task: point %d duty=%lu V=%.3f I=%.3f mA P=%.1f mW",
+                     step, (unsigned long)duty, v, i_mA, p_mW);
         }
-
-        ESP_LOGI(TAG, "producer_task: db_add succeeded (v=%.3f,i=%.3f) || attempts=%d", v, i, attempts);
-
-        duty += stepsize;
-        if (duty > pwm_res)
-            duty = pwm_res;
-
-        pwm_controller_set_duty_in_res_steps(duty);
-        vTaskDelay(pdMS_TO_TICKS(250));
     }
 
     ESP_LOGI(TAG, "producer_task: Finished data production");
