@@ -171,6 +171,12 @@ static bool measurement_start_locked(void)
     if (g_app.measurement_running)
         return false;
 
+    if (g_app.dynamic_load_active)
+    {
+        ESP_LOGW(TAG, "measurement_start_locked: refused, dynamic load screen is active");
+        return false;
+    }
+
     db_reset();
     g_app.measurement_stop_requested = false;
 
@@ -305,6 +311,9 @@ static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms,
     int64_t window_start = esp_timer_get_time();
     while ((esp_timer_get_time() - window_start) < (int64_t)SWEEP_SAMPLE_WINDOW_MS * 1000)
     {
+        if (g_app.measurement_stop_requested)
+            break;
+
         int32_t bus_mV = 0, shunt_uV = 0;
         bool ok = ina219_get_bus_voltage_mv(g_app.ina_dev, &bus_mV) == ESP_OK;
         ok &= ina219_get_shunt_voltage_uv(g_app.ina_dev, &shunt_uV) == ESP_OK;
@@ -327,6 +336,11 @@ static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms,
     int shunt_mOhm = g_app.ina_cal.shunt_resistor_mOhm;
     float current_mA = (shunt_mOhm > 0) ? (shunt_uV / (float)shunt_mOhm) : 0.0f;
     float voltage_mV = bus_mV - (shunt_uV / 1000.0f);
+
+    if (voltage_mV < 0.0f)
+        voltage_mV = 0.0f;
+    if (current_mA < 0.0f)
+        current_mA = 0.0f;
 
     *out_v = voltage_mV / 1000.0f; // volts
     *out_i_mA = current_mA;
@@ -372,7 +386,7 @@ static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, 
     // so a probe walking duty DOWN would still read the previous, higher
     // duty's current draining out of the filter rather than its own.
     uint32_t lo = 0;
-    uint32_t lo_i_mA_bits = 0; // stores lo's measured current, as an integer mA
+    float lo_i_mA = 0.0f; // stores lo's measured current, as float mA
     uint32_t knee = 0;
     uint32_t duty = (SWEEP_PROBE_START_DUTY < hard_max) ? SWEEP_PROBE_START_DUTY : hard_max;
 
@@ -388,8 +402,8 @@ static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, 
 
         if (v_mV <= collapse_mV)
         {
-            uint32_t isc_mA = (uint32_t)(i_mA + 0.5f);
-            if (lo == 0 || lo_i_mA_bits == 0)
+            float isc_mA = i_mA;
+            if (lo == 0 || lo_i_mA <= 0.5f)
             {
                 // Collapsed on the very first loaded probe: no regulating
                 // point to scale from, so fall back to the collapsing duty.
@@ -397,19 +411,19 @@ static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, 
             }
             else
             {
-                knee = (uint32_t)(((uint64_t)isc_mA * lo) / lo_i_mA_bits);
+                knee = (uint32_t)((isc_mA * (float)lo) / lo_i_mA);
                 if (knee > hard_max)
                     knee = hard_max;
             }
-            ESP_LOGI(TAG, "auto_range: collapsed at duty %lu, Isc=%lu mA, %lu mA per 1000 duty steps, knee at duty %lu",
-                     (unsigned long)duty, (unsigned long)isc_mA,
-                     lo ? (unsigned long)(((uint64_t)lo_i_mA_bits * 1000) / lo) : 0UL,
+            ESP_LOGI(TAG, "auto_range: collapsed at duty %lu, Isc=%.1f mA, %.1f mA per 1000 duty steps, knee at duty %lu",
+                     (unsigned long)duty, isc_mA,
+                     lo ? (double)((lo_i_mA * 1000.0f) / (float)lo) : 0.0,
                      (unsigned long)knee);
             break;
         }
 
         lo = duty;
-        lo_i_mA_bits = (uint32_t)(i_mA + 0.5f);
+        lo_i_mA = i_mA;
         if (duty >= hard_max)
             break;
         duty = (duty * 2 < hard_max) ? duty * 2 : hard_max;
@@ -497,6 +511,7 @@ static void producer_task(void *arg)
     if (!auto_range(pwm_res, &top, &knee, &voc_mV))
     {
         ESP_LOGW(TAG, "producer_task: auto-range aborted, recording nothing");
+        ESP_LOGI(TAG, "producer_task stack high water mark: %u words", (unsigned)uxTaskGetStackHighWaterMark(NULL));
         producer_finish("producer_task");
         vTaskDelete(NULL);
         return;
@@ -505,6 +520,7 @@ static void producer_task(void *arg)
     ESP_LOGI(TAG, "producer_task: Starting data production (top=%lu knee=%lu)",
              (unsigned long)top, (unsigned long)knee);
 
+    uint32_t prev_duty = 0;
     for (int step = 0; step < DB_MAX_SAMPLES; step++)
     {
         if (g_app.measurement_stop_requested)
@@ -514,6 +530,16 @@ static void producer_task(void *arg)
         }
 
         uint32_t duty = sweep_duty_for_step(step, top, knee);
+        if (step > 0 && duty <= prev_duty)
+            duty = prev_duty + 1;
+        // Leave room for every remaining step to still strictly increase up
+        // to `top`, so the bump above never crowds the final points.
+        int steps_left = DB_MAX_SAMPLES - 1 - step;
+        if (steps_left > 0 && duty > top - (uint32_t)steps_left)
+            duty = top - (uint32_t)steps_left;
+        if (step == DB_MAX_SAMPLES - 1)
+            duty = top;
+        prev_duty = duty;
 
         // Step 0 (duty 0) after auto-range's high-duty last probe needs a
         // longer settle so it reads a true open-circuit voltage instead of
@@ -553,6 +579,8 @@ static void producer_task(void *arg)
     }
 
     ESP_LOGI(TAG, "producer_task: Finished data production");
+
+    ESP_LOGI(TAG, "producer_task stack high water mark: %u words", (unsigned)uxTaskGetStackHighWaterMark(NULL));
 
     producer_finish("producer_task");
     vTaskDelete(NULL);
