@@ -2,6 +2,7 @@
 set(SRCS
     "main.c"
     "measurement.c"
+    "dynamic_load.c"
     "ui.c"
 )
 file(GLOB_RECURSE LIB_SRCS  "${CMAKE_CURRENT_SOURCE_DIR}/drivers/*.c"
