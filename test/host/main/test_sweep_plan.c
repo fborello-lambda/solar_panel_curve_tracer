@@ -92,3 +92,45 @@ void test_sweep_plan_build_knee_clustering(void)
 
     TEST_ASSERT_GREATER_OR_EQUAL_INT(10, in_band);
 }
+
+// sweep_plan_build()'s `if (step == n - 1) duty = top;` pin is defensive
+// code we could not find a way to make necessary through the public API:
+// coarse_points is defined as `n - FINE_LEG_POINTS - TAIL_LEG_POINTS`, so
+// the tail leg's last point (step == n - 1) always has tail_step exactly
+// equal to SWEEP_TAIL_LEG_POINTS by construction, for every n and every
+// top/knee. Its formula is `band_end + tail_step * span / TAIL_LEG_POINTS`,
+// and multiplying then dividing by the same nonzero integer is exact
+// (no truncation) for any span, so that last point is always exactly
+// `band_end + span == top` even without the pin. This isn't specific to
+// DB_MAX_SAMPLES == 20; it holds for any n >= FINE_LEG_POINTS +
+// TAIL_LEG_POINTS and even smaller n (checked below), and for band_end
+// either side of top (band_end is clamped to <= top upstream).
+//
+// A mutant that changes the pin's condition to `step == n` (never true)
+// is therefore behaviorally silent through sweep_plan_build()/
+// sweep_duty_for_step() as they're currently structured: we could only
+// make the pin load-bearing by restructuring the tail-leg formula to not
+// carry this identity, which would be a real algorithm change beyond a
+// test addition, so we're not doing that here and are documenting the gap
+// instead. This test is the brute-force check backing that claim, not a
+// mutant-killer: it fails loudly (and explains why) if a future change to
+// the leg formulas ever breaks the identity, since at that point the pin
+// would start being needed and its own mutant would become reachable.
+void test_sweep_duty_for_step_last_point_always_equals_top_by_construction(void)
+{
+    for (size_t n = 3; n <= 40; n++)
+    {
+        for (uint32_t top = 1; top <= 3000; top += 37)
+        {
+            for (uint32_t knee = 0; knee <= top; knee += 53)
+            {
+                uint32_t last = sweep_duty_for_step((int)(n - 1), top, knee, n);
+                TEST_ASSERT_EQUAL_UINT32_MESSAGE(
+                    top, last,
+                    "found an (n, top, knee) where the last tail point misses top: "
+                    "the step==n-1 pin in sweep_plan_build is no longer dead code, "
+                    "update the comment above and add a mutant-killing test for it");
+            }
+        }
+    }
+}

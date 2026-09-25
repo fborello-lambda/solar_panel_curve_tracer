@@ -8,6 +8,27 @@
 #define SCALE_MA_PER_DUTY 0.479f // synthetic panel: mA per duty step at low duty
 #define VOC_MV 20000.0f          // synthetic panel Voc, 20 V
 
+// Intentionally hardcoded here rather than reusing
+// SWEEP_KNEE_HEADROOM_PERCENT from sweep_plan.h: this value backs an
+// independent re-derivation of r.top from r.knee, so a mutation to the
+// production macro's value changes r.top but not this expectation, and
+// the test actually catches it (reusing the macro would mutate both sides
+// together and the test would still pass).
+#define EXPECTED_KNEE_HEADROOM_PERCENT 115
+
+// Re-derives the expected top duty from a finished sweep_range_t the same
+// way sweep_range_finish() does, but independently of its implementation
+// (see EXPECTED_KNEE_HEADROOM_PERCENT above).
+static uint32_t expected_top_from_knee(const sweep_range_t *r)
+{
+    uint32_t top = (uint32_t)(((uint64_t)r->knee * EXPECTED_KNEE_HEADROOM_PERCENT) / 100);
+    if (top > r->hard_max)
+        top = r->hard_max;
+    if (top < r->min_top)
+        top = r->min_top;
+    return top;
+}
+
 // Deterministic, small (~+-1.5%) pseudo-noise so the model isn't perfectly
 // linear, without making the test flaky.
 static float jitter(uint32_t duty)
@@ -98,7 +119,45 @@ void test_sweep_range_knee_estimate_tracks_isc(void)
         float expected_knee = isc_mA / SCALE_MA_PER_DUTY;
         float rel_err = fabsf((float)r.knee - expected_knee) / expected_knee;
         TEST_ASSERT_TRUE_MESSAGE(rel_err <= 0.10f, "knee duty not within 10% of Isc/scale");
+
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(expected_top_from_knee(&r), r.top,
+                                          "top is not knee*115%, clamped to [min_top, hard_max]");
     }
+}
+
+void test_sweep_range_knee_times_headroom_clamped_to_hard_max(void)
+{
+    // panel_probe()'s logistic collapse model can't actually reach a knee
+    // this close to hard_max (its steepness bounds the achievable knee well
+    // under hard_max/1.15, see the knee-estimate test above), so this drives
+    // sweep_range_on_probe() directly with hand-picked readings instead of
+    // going through run_auto_range()'s simulated doubling search.
+    sweep_range_t r;
+    sweep_range_begin(&r, PWM_RES, 20);
+
+    bool has_panel = sweep_range_on_voc(&r, VOC_MV);
+    TEST_ASSERT_TRUE(has_panel);
+    TEST_ASSERT_EQUAL_UINT32(SWEEP_PROBE_START_DUTY, r.duty); // == 8
+
+    // First probe (duty 8): not collapsed. lo=8, lo_i_mA=3.832 (8*0.479).
+    bool done = sweep_range_on_probe(&r, VOC_MV * 0.9f, 3.832f);
+    TEST_ASSERT_FALSE(done);
+    TEST_ASSERT_EQUAL_UINT32(16, r.duty); // doubled
+
+    // Second probe (duty 16): collapsed, with i_mA picked so that
+    // knee = i_mA * lo / lo_i_mA = 766.4 * 8 / 3.832 ~= 1600, which is
+    // < hard_max (1638, so the on_probe knee>hard_max clamp doesn't fire)
+    // but knee * 115 / 100 ~= 1840, which IS > hard_max: only
+    // sweep_range_finish()'s clamp keeps r.top at hard_max.
+    done = sweep_range_on_probe(&r, VOC_MV * 0.05f, 766.4f);
+    TEST_ASSERT_TRUE(done);
+
+    TEST_ASSERT_EQUAL(SWEEP_RANGE_DONE, r.status);
+    TEST_ASSERT_TRUE(r.collapsed);
+    TEST_ASSERT_TRUE_MESSAGE(r.knee < r.hard_max, "test setup invalid: knee already clamped to hard_max");
+    TEST_ASSERT_TRUE_MESSAGE((uint64_t)r.knee * EXPECTED_KNEE_HEADROOM_PERCENT / 100 > r.hard_max,
+                              "test setup invalid: knee*115% did not actually exceed hard_max");
+    TEST_ASSERT_EQUAL_UINT32(r.hard_max, r.top);
 }
 
 void test_sweep_range_low_voc_is_no_panel(void)

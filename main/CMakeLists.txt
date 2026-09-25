@@ -14,12 +14,15 @@ file(GLOB_RECURSE LIB_SRCS  "${CMAKE_CURRENT_SOURCE_DIR}/drivers/*.c"
 list(APPEND SRCS ${LIB_SRCS})
 
 # Register component with include dirs.
-# sweep_plan and json_builder are picked up by ESP-IDF's automatic
-# component requirement detection (they're found via #include in
-# measurement.c and server/server.h). Listing them explicitly in
-# REQUIRES/PRIV_REQUIRES turns off that auto-detection for the whole
-# component, which then fails to find driver/esp_timer/etc, so they're
-# deliberately left out here.
+# sweep_plan and json_builder are NOT listed in REQUIRES/PRIV_REQUIRES below.
+# There is no #include scanning: when a component's idf_component_register
+# call omits REQUIRES/PRIV_REQUIRES entirely, ESP-IDF implicitly requires
+# every other component in the build for it (main gets driver, esp_timer,
+# sweep_plan, json_builder, all of it, for free). Listing even one component
+# explicitly switches that off and makes the list exhaustive instead of
+# additive, so main would then need driver/esp_timer/etc spelled out by hand
+# too. Left unset here on purpose so main keeps its (undeclared) access to
+# every project component.
 idf_component_register(SRCS ${SRCS}
                         INCLUDE_DIRS "." "drivers" "utils" "server" "db")
 
