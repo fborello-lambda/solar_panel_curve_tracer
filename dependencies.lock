@@ -24,6 +24,6 @@ direct_dependencies:
 - espressif/led_strip
 - espressif/qrcode
 - idf
-manifest_hash: 5092c92ef52de5beb2497d0ccdbb5da5356a13ff9da32857430682532f732c4f
+manifest_hash: 342e752757a0bf8f1f7064ab66a8f8fe62e2b88c8cb6df59ff159aad95f0897c
 target: esp32c3
 version: 2.0.0
