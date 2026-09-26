@@ -214,7 +214,7 @@ void app_tasks_start(void)
         .use_internal_pullups = true,
         .sw_debounce_ms = 25,
         .event_queue_len = 32,
-        .counts_per_step = 4, // valid quarter-step transitions per step; raise to make the menu less sensitive
+        .counts_per_step = 16, // valid transitions per menu step (4 per quadrature cycle): same travel as before, raise to make it less sensitive
     };
 
     esp_err_t enc_ret = encoder_init(&enc_cfg);
