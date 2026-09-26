@@ -1,0 +1,13 @@
+# Secure Boot V2 (RSA) overlay — applies ONLY to the maintainer's one
+# fused board. Build with:
+#   idf.py -B build-secure -D SDKCONFIG=build-secure/sdkconfig \
+#       -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.secure" build
+#
+# This file is merged on top of sdkconfig.defaults (which stays common to
+# both variants, including CONFIG_PARTITION_TABLE_OFFSET=0xD000).
+CONFIG_SECURE_BOOT=y
+CONFIG_SECURE_BOOT_V2_ENABLED=y
+CONFIG_SECURE_BOOT_V2_RSA_ENABLED=y
+CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=y
+CONFIG_SECURE_BOOT_SIGNING_KEY="secure_boot_signing_key.pem"
+CONFIG_SECURE_BOOT_FLASH_BOOTLOADER_DEFAULT=y

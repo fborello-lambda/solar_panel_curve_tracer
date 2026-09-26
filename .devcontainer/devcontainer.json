@@ -1,5 +1,5 @@
 {
-	"name": "ESP-IDF QEMU",
+	"name": "ESP-IDF ESP32-C3",
 	"build": {
 		"dockerfile": "Dockerfile"
 	},

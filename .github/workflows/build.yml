@@ -1,12 +1,28 @@
 name: Build
 
+# Builds both firmware variants on every push to main (docs-only changes are
+# ignored) and publishes a single "latest" release per commit, or can be run
+# manually via workflow_dispatch.
+
 on:
-  pull_request:
-    types: [closed]
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+      - "notebook/**"
+      - "imgs/**"
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
   build:
-    if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     container:
       image: espressif/idf:v5.5.1
@@ -15,9 +31,11 @@ jobs:
       matrix:
         include:
           - variant: standard
-            secure_boot: false
+            build_dir: build
+            sdkconfig_defaults: sdkconfig.defaults
           - variant: secure-boot
-            secure_boot: true
+            build_dir: build-secure
+            sdkconfig_defaults: "sdkconfig.defaults;sdkconfig.secure"
 
     steps:
       - uses: actions/checkout@v4
@@ -27,44 +45,148 @@ jobs:
       - name: Fix git ownership
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
-      - name: Enable secure boot config
-        if: matrix.secure_boot
-        run: |
-          sed -i 's/^# CONFIG_PARTITION_TABLE_MD5/CONFIG_PARTITION_TABLE_MD5/' sdkconfig.defaults
-          sed -i 's/^# CONFIG_SECURE_BOOT/CONFIG_SECURE_BOOT/' sdkconfig.defaults
-          sed -i 's/^# CONFIG_SECURE_BOOT_V2_ENABLED/CONFIG_SECURE_BOOT_V2_ENABLED/' sdkconfig.defaults
-          sed -i 's/^# CONFIG_SECURE_BOOT_V2_RSA_ENABLED/CONFIG_SECURE_BOOT_V2_RSA_ENABLED/' sdkconfig.defaults
-          sed -i 's/^# CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES/CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES/' sdkconfig.defaults
-          sed -i 's/^# CONFIG_SECURE_BOOT_SIGNING_KEY/CONFIG_SECURE_BOOT_SIGNING_KEY/' sdkconfig.defaults
-          sed -i 's/^# CONFIG_SECURE_BOOT_FLASH_BOOTLOADER_DEFAULT/CONFIG_SECURE_BOOT_FLASH_BOOTLOADER_DEFAULT/' sdkconfig.defaults
-
       - name: Build firmware
         shell: bash
         run: |
           . /opt/esp/idf/export.sh
-          idf.py build
-          mv build/web_server.bin build/app.bin
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          export PROJECT_VER_OVERRIDE="${SHORT_SHA}-${{ matrix.variant }}"
+          idf.py -B "${{ matrix.build_dir }}" \
+            -D "SDKCONFIG=${{ matrix.build_dir }}/sdkconfig" \
+            -D "SDKCONFIG_DEFAULTS=${{ matrix.sdkconfig_defaults }}" \
+            build
+
+      - name: App size gate
+        shell: bash
+        run: .github/scripts/check_app_size.sh "${{ matrix.build_dir }}/web_server.bin"
+
+      - name: Build merged factory image (standard variant only)
+        if: matrix.variant == 'standard'
+        shell: bash
+        run: |
+          . /opt/esp/idf/export.sh
+          # Explicit offsets (bootloader/partition-table/ota_data/app), not
+          # `@flash_args`: that file embeds its own --flash_size (usually
+          # "detect"), which conflicts with the --flash_size 4MB below that
+          # a fresh, blank board needs.
+          esptool.py --chip esp32c3 merge_bin \
+            -o "${{ matrix.build_dir }}/factory-standard.bin" \
+            --flash_mode dio --flash_freq 80m --flash_size 4MB \
+            0x0 "${{ matrix.build_dir }}/bootloader/bootloader.bin" \
+            0xd000 "${{ matrix.build_dir }}/partition_table/partition-table.bin" \
+            0x12000 "${{ matrix.build_dir }}/ota_data_initial.bin" \
+            0x20000 "${{ matrix.build_dir }}/web_server.bin"
+
+      - name: Stage release assets
+        shell: bash
+        run: |
+          mkdir -p out
+          cp "${{ matrix.build_dir }}/web_server.bin" "out/app-${{ matrix.variant }}.bin"
+          cp "${{ matrix.build_dir }}/storage.bin" "out/storage.bin"
+          if [ -f "${{ matrix.build_dir }}/factory-standard.bin" ]; then
+            cp "${{ matrix.build_dir }}/factory-standard.bin" out/
+          fi
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: firmware-${{ matrix.variant }}-${{ github.sha }}
-          path: |
-            build/app.bin
-            build/storage.bin
+          path: out/
+
+  host-tests:
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:v5.5.1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fix git ownership
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Build and run host tests (linux target)
+        shell: bash
+        working-directory: test/host
+        run: |
+          . /opt/esp/idf/export.sh
+          idf.py --preview set-target linux
+          idf.py build
+          ./build/host_tests.elf
+
+  release:
+    needs: [build, host-tests]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Assemble release assets
+        run: |
+          mkdir -p release
+          cp artifacts/firmware-standard-${{ github.sha }}/app-standard.bin release/
+          cp artifacts/firmware-standard-${{ github.sha }}/factory-standard.bin release/
+          cp artifacts/firmware-standard-${{ github.sha }}/storage.bin release/
+          cp artifacts/firmware-secure-boot-${{ github.sha }}/app-secure-boot.bin release/
+          ls -la release/
 
       - name: Generate version tag
         id: version
-        shell: bash
         run: |
           SHORT_SHA=$(git rev-parse --short HEAD)
-          echo "tag=rev1.${SHORT_SHA}-${{ matrix.variant }}" >> $GITHUB_OUTPUT
+          echo "tag=rev1.${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Write release notes
+        run: |
+          cat > release/RELEASE_BODY.md <<EOF
+          ## Firmware assets
+
+          | File | Who it's for |
+          | --- | --- |
+          | \`app-standard.bin\` | Standard boards — OTA update via \`/ota\` |
+          | \`factory-standard.bin\` | Standard boards — full flash at offset \`0x0\` on a fresh/blank board over USB |
+          | \`storage.bin\` | Both variants — SPIFFS web UI files, flash/OTA after the app |
+          | \`app-secure-boot.bin\` | **Maintainer's secure-boot board ONLY** |
+
+          > **Warning:** \`app-secure-boot.bin\` is signed for the maintainer's one
+          > Secure Boot V2 (RSA) fused board. Do **not** flash it on a standard
+          > board: a standard board that receives a secure-boot bootloader/image
+          > will burn its own verification eFuses and from then on only accept
+          > images signed with this project's secure boot key, permanently. If
+          > you are not that board, use \`app-standard.bin\` / \`factory-standard.bin\`.
+
+          ## Flashing a fresh standard board
+
+          1. Flash \`factory-standard.bin\` at offset \`0x0\` (contains bootloader + partition table + app + ota_data), e.g.:
+             \`esptool.py --chip esp32c3 write_flash 0x0 factory-standard.bin\`
+          2. Flash \`storage.bin\` at the \`storage\` partition offset (see \`partitions.csv\`, currently \`0x240000\`).
+
+          ## Updating an already-flashed standard board (OTA)
+
+          1. Join the Wi-Fi network \`ESP32_PLOT\` (no password).
+          2. Open \`http://192.168.4.1/ota\` in a browser.
+          3. Upload \`app-standard.bin\` first, then \`storage.bin\`.
+
+          ---
+          EOF
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
+          name: ${{ steps.version.outputs.tag }}
+          make_latest: "true"
+          body_path: release/RELEASE_BODY.md
+          generate_release_notes: true
           files: |
-            build/app.bin
-            build/storage.bin
-          generate_release_notes: ${{ matrix.variant == 'standard' }}
+            release/app-standard.bin
+            release/factory-standard.bin
+            release/storage.bin
+            release/app-secure-boot.bin
