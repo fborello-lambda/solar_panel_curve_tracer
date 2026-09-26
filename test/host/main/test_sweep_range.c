@@ -26,6 +26,9 @@ static uint32_t expected_top_from_knee(const sweep_range_t *r)
         top = r->hard_max;
     if (top < r->min_top)
         top = r->min_top;
+    // A collapsed sweep must also be able to reach the collapsing probe.
+    if (r->collapsed && top < r->duty)
+        top = (r->duty < r->hard_max) ? r->duty : r->hard_max;
     return top;
 }
 
@@ -121,7 +124,7 @@ void test_sweep_range_knee_estimate_tracks_isc(void)
         TEST_ASSERT_TRUE_MESSAGE(rel_err <= 0.10f, "knee duty not within 10% of Isc/scale");
 
         TEST_ASSERT_EQUAL_UINT32_MESSAGE(expected_top_from_knee(&r), r.top,
-                                          "top is not knee*115%, clamped to [min_top, hard_max]");
+                                          "top is not max(knee*115%, collapsing duty), clamped to [min_top, hard_max]");
     }
 }
 

@@ -83,6 +83,12 @@ bool sweep_range_on_probe(sweep_range_t *r, float v_mV, float i_mA)
                 knee = r->hard_max;
         }
         sweep_range_finish(r, knee, isc_mA);
+        // The collapsing probe's duty is known to be past Isc: make sure the
+        // sweep can reach it even when the knee estimate is off (a reading
+        // offset skews the mA-per-duty scale), so the curve always ends at
+        // the collapse instead of stopping on the flat part.
+        if (r->top < r->duty)
+            r->top = (r->duty < r->hard_max) ? r->duty : r->hard_max;
         return true;
     }
 
@@ -201,13 +207,11 @@ uint32_t sweep_adapt_next(sweep_adapt_t *a, float v_mV, float i_mA)
         if ((uint32_t)delta_duty < forced)
             delta_duty = (float)forced;
     }
-    else
+    else if (delta_duty > (float)span)
     {
-        uint32_t max_allowed = span / 2;
-        if (max_allowed < 1)
-            max_allowed = 1;
-        if (delta_duty > (float)max_allowed)
-            delta_duty = (float)max_allowed;
+        // Never past top. (Halving the remaining span here instead made the
+        // last points crawl toward top one duty step at a time on hardware.)
+        delta_duty = (float)(span > 0 ? span : 1);
     }
 
     uint32_t next_duty = duty + (uint32_t)delta_duty;
