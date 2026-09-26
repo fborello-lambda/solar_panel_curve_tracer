@@ -1,12 +1,34 @@
 #include "init.h"
 #include <string.h>
 #include <nvs.h>
+#include <esp_timer.h>
 
 #define AP_SSID "ESP32_PLOT"
 #define AP_PASSWORD ""
 #define AP_AUTHMODE WIFI_AUTH_OPEN
 
+// STA reconnect backoff: give up after this many consecutive
+// WIFI_EVENT_STA_DISCONNECTED without a GOT_IP in between. The counter is
+// reset on GOT_IP and whenever new credentials are applied.
+#define STA_MAX_RETRIES 5
+#define STA_RETRY_BASE_MS 500
+
 static const char *TAG = "init";
+
+static int s_sta_retry_count = 0;
+static esp_timer_handle_t s_sta_retry_timer = NULL;
+
+static void sta_retry_timer_cb(void *arg)
+{
+    esp_wifi_connect();
+}
+
+static void sta_reset_retry(void)
+{
+    s_sta_retry_count = 0;
+    if (s_sta_retry_timer)
+        esp_timer_stop(s_sta_retry_timer); // ok if not currently running
+}
 
 static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
@@ -16,13 +38,38 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
     }
     else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED)
     {
-        ESP_LOGW(TAG, "STA disconnected, retrying...");
-        esp_wifi_connect();
+        if (s_sta_retry_count >= STA_MAX_RETRIES)
+        {
+            ESP_LOGE(TAG, "STA disconnected, giving up after %d attempts", STA_MAX_RETRIES);
+            return;
+        }
+
+        uint32_t delay_ms = STA_RETRY_BASE_MS << s_sta_retry_count; // 500,1000,2000,4000,8000
+        s_sta_retry_count++;
+        ESP_LOGW(TAG, "STA disconnected, retry %d/%d in %lu ms",
+                 s_sta_retry_count, STA_MAX_RETRIES, (unsigned long)delay_ms);
+
+        if (s_sta_retry_timer == NULL)
+        {
+            const esp_timer_create_args_t targs = {
+                .callback = sta_retry_timer_cb,
+                .name = "sta_retry",
+            };
+            if (esp_timer_create(&targs, &s_sta_retry_timer) != ESP_OK)
+            {
+                ESP_LOGW(TAG, "sta retry: failed to create backoff timer, retrying immediately");
+                esp_wifi_connect();
+                return;
+            }
+        }
+        esp_timer_stop(s_sta_retry_timer); // ignore ESP_ERR_INVALID_STATE if not running
+        esp_timer_start_once(s_sta_retry_timer, (uint64_t)delay_ms * 1000);
     }
     else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP)
     {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
         ESP_LOGI(TAG, "STA got IP: " IPSTR, IP2STR(&event->ip_info.ip));
+        sta_reset_retry();
     }
 }
 
@@ -99,14 +146,64 @@ bool wifi_softap_is_open(void)
     return AP_AUTHMODE == WIFI_AUTH_OPEN || strlen(AP_PASSWORD) == 0;
 }
 
+esp_err_t wifi_apply_sta_credentials(const char *ssid, const char *password)
+{
+    sta_reset_retry();
+
+    wifi_mode_t mode;
+    esp_err_t err = esp_wifi_get_mode(&mode);
+    if (err != ESP_OK)
+        return err;
+
+    if (mode == WIFI_MODE_AP)
+    {
+        err = esp_wifi_set_mode(WIFI_MODE_APSTA);
+        if (err != ESP_OK)
+            return err;
+    }
+
+    wifi_config_t sta_config = {0};
+    strlcpy((char *)sta_config.sta.ssid, ssid, sizeof(sta_config.sta.ssid));
+    strlcpy((char *)sta_config.sta.password, password, sizeof(sta_config.sta.password));
+    err = esp_wifi_set_config(WIFI_IF_STA, &sta_config);
+    if (err != ESP_OK)
+        return err;
+
+    err = esp_wifi_connect();
+    // Already connected/connecting is not a failure worth reporting.
+    if (err == ESP_ERR_WIFI_CONN)
+        return ESP_OK;
+    return err;
+}
+
+esp_err_t wifi_clear_sta_credentials(void)
+{
+    sta_reset_retry();
+
+    esp_err_t err = esp_wifi_disconnect();
+    if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED && err != ESP_ERR_WIFI_NOT_CONNECT)
+        return err;
+
+    wifi_mode_t mode;
+    err = esp_wifi_get_mode(&mode);
+    if (err != ESP_OK)
+        return err;
+
+    if (mode == WIFI_MODE_APSTA)
+        return esp_wifi_set_mode(WIFI_MODE_AP);
+
+    return ESP_OK;
+}
+
 void system_init_all(void)
 {
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND)
     {
         ESP_ERROR_CHECK(nvs_flash_erase());
-        ESP_ERROR_CHECK(nvs_flash_init());
+        ret = nvs_flash_init();
     }
+    ESP_ERROR_CHECK(ret);
 
     wifi_init_softap();
     ESP_ERROR_CHECK(server_init());
