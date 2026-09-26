@@ -82,7 +82,6 @@ jobs:
         run: |
           mkdir -p out
           cp "${{ matrix.build_dir }}/web_server.bin" "out/app-${{ matrix.variant }}.bin"
-          cp "${{ matrix.build_dir }}/storage.bin" "out/storage.bin"
           if [ -f "${{ matrix.build_dir }}/factory-standard.bin" ]; then
             cp "${{ matrix.build_dir }}/factory-standard.bin" out/
           fi
@@ -132,7 +131,6 @@ jobs:
           mkdir -p release
           cp artifacts/firmware-standard-${{ github.sha }}/app-standard.bin release/
           cp artifacts/firmware-standard-${{ github.sha }}/factory-standard.bin release/
-          cp artifacts/firmware-standard-${{ github.sha }}/storage.bin release/
           cp artifacts/firmware-secure-boot-${{ github.sha }}/app-secure-boot.bin release/
           ls -la release/
 
@@ -150,9 +148,8 @@ jobs:
 
           | File | Who it's for |
           | --- | --- |
-          | \`app-standard.bin\` | Standard boards - OTA update via \`/ota\` |
+          | \`app-standard.bin\` | Standard boards - OTA update via \`/ota\`, one file |
           | \`factory-standard.bin\` | Standard boards - full flash at offset \`0x0\` on a fresh/blank board over USB |
-          | \`storage.bin\` | Both variants - SPIFFS web UI files, flash/OTA after the app |
           | \`app-secure-boot.bin\` | **Maintainer's secure-boot board ONLY** |
 
           > **Warning:** \`app-secure-boot.bin\` is signed for the maintainer's one
@@ -162,17 +159,18 @@ jobs:
           > images signed with this project's secure boot key, permanently. If
           > you are not that board, use \`app-standard.bin\` / \`factory-standard.bin\`.
 
+          The web UI is embedded in the app image, so OTA is a single file.
+
           ## Flashing a fresh standard board
 
-          1. Flash \`factory-standard.bin\` at offset \`0x0\` (contains bootloader + partition table + app + ota_data), e.g.:
+          1. Flash \`factory-standard.bin\` at offset \`0x0\` only (contains bootloader + partition table + ota_data_initial + app), e.g.:
              \`esptool.py --chip esp32c3 write_flash 0x0 factory-standard.bin\`
-          2. Flash \`storage.bin\` at the \`storage\` partition offset (see \`partitions.csv\`, currently \`0x240000\`).
 
           ## Updating an already-flashed standard board (OTA)
 
           1. Join the Wi-Fi network \`ESP32_PLOT\` (no password).
           2. Open \`http://192.168.4.1/ota\` in a browser.
-          3. Upload \`app-standard.bin\` first, then \`storage.bin\`.
+          3. Upload \`app-standard.bin\`.
 
           ---
           EOF
@@ -195,5 +193,4 @@ jobs:
           files: |
             release/app-standard.bin
             release/factory-standard.bin
-            release/storage.bin
             release/app-secure-boot.bin

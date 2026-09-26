@@ -108,7 +108,6 @@ void system_init_all(void)
         ESP_ERROR_CHECK(nvs_flash_init());
     }
 
-    ESP_ERROR_CHECK(spiffs_init());
     wifi_init_softap();
     ESP_ERROR_CHECK(server_init());
 

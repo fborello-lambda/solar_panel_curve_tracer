@@ -47,23 +47,12 @@ OTADATA_LINE=$(grep 'ota_data_initial.bin' "$FLASH_ARGS_FILE")
 echo "=== Flashing bootloader, app, partition table, ota_data ==="
 # shellcheck disable=SC2086
 esptool.py -p "$PORT" -b 460800 \
-    --before default_reset --after no_reset \
+    --before default_reset --after hard_reset \
     --chip esp32c3 --no-stub \
     write_flash $FLASH_OPTS --flash_size keep \
     $(awk -v d="$BUILD_DIR" '{print $1, d"/"$2}' <<< "$BOOTLOADER_LINE") \
     $(awk -v d="$BUILD_DIR" '{print $1, d"/"$2}' <<< "$APP_LINE") \
     $(awk -v d="$BUILD_DIR" '{print $1, d"/"$2}' <<< "$PARTTABLE_LINE") \
     $(awk -v d="$BUILD_DIR" '{print $1, d"/"$2}' <<< "$OTADATA_LINE")
-
-# SPIFFS workaround (see LESSONS.md "Secure Boot"): in Secure Download Mode
-# esptool cannot read flash/eFuses, and a large erase in one write_flash call
-# can fail, so the storage partition is flashed separately with an explicit
-# --flash_size instead of "keep".
-echo "=== Flashing storage (SPIFFS) ==="
-esptool.py -p "$PORT" -b 460800 \
-    --before no_reset --after hard_reset \
-    --chip esp32c3 --no-stub \
-    write_flash --flash_mode dio --flash_freq 80m --flash_size 4MB \
-    0x240000 "${BUILD_DIR}/storage.bin"
 
 echo "=== Done ==="

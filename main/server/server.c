@@ -13,34 +13,72 @@ extern bool measurement_request(bool);
 
 static const char *TAG = "server";
 
-static esp_err_t send_file(httpd_req_t *req, const char *path, const char *type)
+// Web UI files are gzip-compressed at build time and embedded directly in
+// the firmware image (see main/CMakeLists.txt), so there is no filesystem
+// to serve them from any more. Each embedded blob is exposed by the
+// linker-provided _binary_<name>_start/_end symbols below.
+extern const uint8_t index_html_gz_start[] asm("_binary_index_html_gz_start");
+extern const uint8_t index_html_gz_end[] asm("_binary_index_html_gz_end");
+extern const uint8_t script_js_gz_start[] asm("_binary_script_js_gz_start");
+extern const uint8_t script_js_gz_end[] asm("_binary_script_js_gz_end");
+extern const uint8_t chart_umd_min_js_gz_start[] asm("_binary_chart_umd_min_js_gz_start");
+extern const uint8_t chart_umd_min_js_gz_end[] asm("_binary_chart_umd_min_js_gz_end");
+extern const uint8_t ota_html_gz_start[] asm("_binary_ota_html_gz_start");
+extern const uint8_t ota_html_gz_end[] asm("_binary_ota_html_gz_end");
+
+// The user guide PDF is not embedded (see main/CMakeLists.txt): it barely
+// gzips and its size threatened the secure-boot variant's flash budget.
+// /guide instead redirects to the hosted copy in the repo.
+#define GUIDE_REDIRECT_URL "https://github.com/fborello-lambda/solar_panel_curve_tracer/blob/main/docs/quick_guide.pdf"
+
+typedef struct
 {
-    FILE *f = fopen(path, "rb");
-    if (!f)
+    const char *uri;
+    const uint8_t *start;
+    const uint8_t *end;
+    const char *content_type;
+} static_route_t;
+
+static const static_route_t s_static_routes[] = {
+    {"/", index_html_gz_start, index_html_gz_end, "text/html; charset=utf-8"},
+    {"/script.js", script_js_gz_start, script_js_gz_end, "application/javascript"},
+    {"/chart.js", chart_umd_min_js_gz_start, chart_umd_min_js_gz_end, "application/javascript"},
+    {"/ota", ota_html_gz_start, ota_html_gz_end, "text/html; charset=utf-8"},
+};
+#define STATIC_ROUTE_COUNT (sizeof(s_static_routes) / sizeof(s_static_routes[0]))
+
+static esp_err_t static_get_handler(httpd_req_t *req)
+{
+    const static_route_t *route = (const static_route_t *)req->user_ctx;
+
+    const esp_app_desc_t *desc = esp_app_get_description();
+    char etag[40];
+    snprintf(etag, sizeof(etag), "\"%s\"", desc->version);
+
+    char if_none_match[40] = {0};
+    if (httpd_req_get_hdr_value_str(req, "If-None-Match", if_none_match, sizeof(if_none_match)) == ESP_OK &&
+        strcmp(if_none_match, etag) == 0)
     {
-        httpd_resp_set_status(req, "404 Not Found");
-        return httpd_resp_send(req, "Not found", HTTPD_RESP_USE_STRLEN);
+        httpd_resp_set_status(req, "304 Not Modified");
+        httpd_resp_set_hdr(req, "ETag", etag);
+        httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+        return httpd_resp_send(req, NULL, 0);
     }
-    httpd_resp_set_type(req, type);
-    httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=86400");
-    char buf[1024];
-    size_t n;
-    while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
-    {
-        if (httpd_resp_send_chunk(req, buf, n) != ESP_OK)
-        {
-            fclose(f);
-            return ESP_FAIL;
-        }
-    }
-    fclose(f);
-    return httpd_resp_send_chunk(req, NULL, 0);
+
+    httpd_resp_set_type(req, route->content_type);
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
+    httpd_resp_set_hdr(req, "ETag", etag);
+    return httpd_resp_send(req, (const char *)route->start, route->end - route->start);
 }
 
-static esp_err_t root_get_handler(httpd_req_t *req) { return send_file(req, "/spiffs/index.html", "text/html; charset=utf-8"); }
-static esp_err_t chart_get_handler(httpd_req_t *req) { return send_file(req, "/spiffs/chart.umd.min.js", "application/javascript"); }
-static esp_err_t script_get_handler(httpd_req_t *req) { return send_file(req, "/spiffs/script.js", "application/javascript"); }
-static esp_err_t guide_get_handler(httpd_req_t *req) { return send_file(req, "/spiffs/guide.pdf", "application/pdf"); }
+static esp_err_t guide_get_handler(httpd_req_t *req)
+{
+    httpd_resp_set_status(req, "302 Found");
+    httpd_resp_set_hdr(req, "Location", GUIDE_REDIRECT_URL);
+    return httpd_resp_send(req, NULL, 0);
+}
+
 static esp_err_t data_get_handler(httpd_req_t *req)
 {
     // Ensure data responses are not cached by clients/proxies
@@ -111,78 +149,6 @@ static esp_err_t start_measurement_handler(httpd_req_t *req)
     }
 
     return httpd_resp_send(req, "{\"running\":true}", HTTPD_RESP_USE_STRLEN);
-}
-
-static esp_err_t ota_get_handler(httpd_req_t *req)
-{
-    return send_file(req, "/spiffs/ota.html", "text/html; charset=utf-8");
-}
-
-static esp_err_t spiffs_ota_post_handler(httpd_req_t *req)
-{
-    httpd_resp_set_type(req, "application/json");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-
-    if (req->content_len == 0)
-    {
-        httpd_resp_set_status(req, "400 Bad Request");
-        return httpd_resp_send(req, "{\"error\":\"Empty body\"}", HTTPD_RESP_USE_STRLEN);
-    }
-
-    const esp_partition_t *partition = esp_partition_find_first(
-        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_SPIFFS, "storage");
-    if (!partition)
-    {
-        httpd_resp_set_status(req, "500 Internal Server Error");
-        return httpd_resp_send(req, "{\"error\":\"Storage partition not found\"}", HTTPD_RESP_USE_STRLEN);
-    }
-
-    esp_err_t err = esp_partition_erase_range(partition, 0, partition->size);
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "Partition erase failed: %s", esp_err_to_name(err));
-        httpd_resp_set_status(req, "500 Internal Server Error");
-        return httpd_resp_send(req, "{\"error\":\"Erase failed\"}", HTTPD_RESP_USE_STRLEN);
-    }
-
-    char buf[1024];
-    int remaining = (int)req->content_len;
-    uint32_t offset = 0;
-    bool write_ok = true;
-
-    while (remaining > 0)
-    {
-        int to_recv = (remaining < (int)sizeof(buf)) ? remaining : (int)sizeof(buf);
-        int recv_len = httpd_req_recv(req, buf, to_recv);
-        if (recv_len < 0)
-        {
-            if (recv_len == HTTPD_SOCK_ERR_TIMEOUT)
-                continue;
-            write_ok = false;
-            break;
-        }
-        err = esp_partition_write(partition, offset, buf, recv_len);
-        if (err != ESP_OK)
-        {
-            ESP_LOGE(TAG, "Partition write failed at offset %lu: %s", (unsigned long)offset, esp_err_to_name(err));
-            write_ok = false;
-            break;
-        }
-        offset += recv_len;
-        remaining -= recv_len;
-    }
-
-    if (!write_ok)
-    {
-        httpd_resp_set_status(req, "500 Internal Server Error");
-        return httpd_resp_send(req, "{\"error\":\"Write failed\"}", HTTPD_RESP_USE_STRLEN);
-    }
-
-    ESP_LOGI(TAG, "SPIFFS OTA complete (%lu bytes), rebooting", (unsigned long)offset);
-    httpd_resp_send(req, "{\"ok\":true}", HTTPD_RESP_USE_STRLEN);
-    vTaskDelay(pdMS_TO_TICKS(500));
-    esp_restart();
-    return ESP_OK;
 }
 
 static esp_err_t ota_post_handler(httpd_req_t *req)
@@ -364,16 +330,6 @@ static esp_err_t wifi_config_post_handler(httpd_req_t *req)
     return httpd_resp_send(req, out, n);
 }
 
-esp_err_t spiffs_init(void)
-{
-    esp_vfs_spiffs_conf_t conf = {
-        .base_path = "/spiffs",
-        .partition_label = "storage",
-        .max_files = 8,
-        .format_if_mount_failed = true};
-    return esp_vfs_spiffs_register(&conf);
-}
-
 esp_err_t server_init(void)
 {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
@@ -389,27 +345,28 @@ esp_err_t server_init(void)
         return ESP_FAIL;
     }
 
-    httpd_uri_t root = {.uri = "/", .method = HTTP_GET, .handler = root_get_handler};
-    httpd_uri_t chart = {.uri = "/chart.js", .method = HTTP_GET, .handler = chart_get_handler};
-    httpd_uri_t script = {.uri = "/script.js", .method = HTTP_GET, .handler = script_get_handler};
+    for (size_t i = 0; i < STATIC_ROUTE_COUNT; i++)
+    {
+        httpd_uri_t route = {
+            .uri = s_static_routes[i].uri,
+            .method = HTTP_GET,
+            .handler = static_get_handler,
+            .user_ctx = (void *)&s_static_routes[i],
+        };
+        httpd_register_uri_handler(server, &route);
+    }
+
     httpd_uri_t guide = {.uri = "/guide", .method = HTTP_GET, .handler = guide_get_handler};
     httpd_uri_t data = {.uri = "/data", .method = HTTP_GET, .handler = data_get_handler};
     httpd_uri_t start_meas = {.uri = "/start-measurement", .method = HTTP_POST, .handler = start_measurement_handler};
-    httpd_uri_t ota_get = {.uri = "/ota", .method = HTTP_GET, .handler = ota_get_handler};
     httpd_uri_t ota_post = {.uri = "/ota", .method = HTTP_POST, .handler = ota_post_handler};
-    httpd_uri_t spiffs_ota_post = {.uri = "/ota/spiffs", .method = HTTP_POST, .handler = spiffs_ota_post_handler};
     httpd_uri_t version = {.uri = "/version", .method = HTTP_GET, .handler = version_get_handler};
     httpd_uri_t wifi_cfg = {.uri = "/wifi-config", .method = HTTP_POST, .handler = wifi_config_post_handler};
 
-    httpd_register_uri_handler(server, &root);
-    httpd_register_uri_handler(server, &chart);
-    httpd_register_uri_handler(server, &script);
     httpd_register_uri_handler(server, &guide);
     httpd_register_uri_handler(server, &data);
     httpd_register_uri_handler(server, &start_meas);
-    httpd_register_uri_handler(server, &ota_get);
     httpd_register_uri_handler(server, &ota_post);
-    httpd_register_uri_handler(server, &spiffs_ota_post);
     httpd_register_uri_handler(server, &version);
     httpd_register_uri_handler(server, &wifi_cfg);
     ESP_LOGI(TAG, "HTTP server started");

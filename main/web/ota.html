@@ -238,16 +238,6 @@
     <p class="reboot-note">The device reboots automatically after a successful upload.</p>
   </div>
 
-  <div class="card">
-    <h3>Storage / SPIFFS (storage.bin)</h3>
-    <p class="hint">Erases and rewrites the web UI storage partition, then reboots.</p>
-    <input id="spiffsFile" class="file-input" type="file" accept=".bin">
-    <button id="spiffsBtn" class="btn-primary" type="button">Upload storage</button>
-    <div class="progress-wrap" id="spiffsProgressWrap"><div class="progress-bar" id="spiffsProgressBar"></div></div>
-    <p id="spiffsStatus" class="status" role="status" aria-live="polite"></p>
-    <p class="reboot-note">The device reboots automatically after a successful upload.</p>
-  </div>
-
   <footer>
     <a href="/">Back to measurements</a>
   </footer>
@@ -365,26 +355,6 @@
             progressBar
           );
           uploadBtn.disabled = false;
-        });
-      }
-
-      const spiffsBtn = document.getElementById("spiffsBtn");
-      const spiffsFileEl = document.getElementById("spiffsFile");
-      const spiffsStatusEl = document.getElementById("spiffsStatus");
-      const spiffsProgressWrap = document.getElementById("spiffsProgressWrap");
-      const spiffsProgressBar = document.getElementById("spiffsProgressBar");
-
-      if (spiffsBtn) {
-        spiffsBtn.addEventListener("click", async function () {
-          spiffsBtn.disabled = true;
-          await uploadWithProgress(
-            spiffsFileEl && spiffsFileEl.files && spiffsFileEl.files[0],
-            "/ota/spiffs",
-            spiffsStatusEl,
-            spiffsProgressWrap,
-            spiffsProgressBar
-          );
-          spiffsBtn.disabled = false;
         });
       }
 

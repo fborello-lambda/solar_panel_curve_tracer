@@ -34,7 +34,6 @@ bool wifi_softap_is_open(void);
 /**
  * @brief Initialize all system components:
  * - NVS
- * - SPIFFS
  * - WiFi
  * - HTTP server
  * - Database/State abstraction
