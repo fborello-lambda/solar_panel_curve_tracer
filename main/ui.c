@@ -64,7 +64,7 @@ static const char *ui_home_title(int index)
 #define UI_MENU_MAX_ITEMS 4
 
 static const char *const s_menu_items[HOME_SECTION_COUNT][UI_MENU_MAX_ITEMS] = {
-    [HOME_SECTION_NETWORK] = {"SHOW WIFI QR", "SHOW AP IP QR", "BACK", NULL},
+    [HOME_SECTION_NETWORK] = {"SHOW WIFI QR", "SHOW AP IP QR", "SHOW GUIDE QR", "BACK"},
     [HOME_SECTION_MEASURE] = {"CURVE TRACER", "DYNAMIC LOAD", "BACK", NULL},
     [HOME_SECTION_SYSTEM] = {"OTA", "RESET", "DEEP SLEEP", "BACK"},
 };
@@ -206,7 +206,18 @@ void ui_on_button(void)
 
         if (g_app.ui_home_index == HOME_SECTION_NETWORK)
         {
-            g_app.ui_qr_kind = (g_app.ui_menu_index == 0) ? UI_QR_WIFI : UI_QR_AP_IP;
+            if (g_app.ui_menu_index == 0)
+            {
+                g_app.ui_qr_kind = UI_QR_WIFI;
+            }
+            else if (g_app.ui_menu_index == 1)
+            {
+                g_app.ui_qr_kind = UI_QR_AP_IP;
+            }
+            else
+            {
+                g_app.ui_qr_kind = UI_QR_GUIDE;
+            }
             ui_set_screen(UI_SCREEN_ACTION_QR);
             return;
         }
@@ -487,6 +498,8 @@ void ui_render_display_frame(uint8_t *fb)
             payload = "http://192.168.4.1";
         else if (g_app.ui_qr_kind == UI_QR_OTA)
             payload = "http://192.168.4.1/ota";
+        else if (g_app.ui_qr_kind == UI_QR_GUIDE)
+            payload = "http://192.168.4.1/guide";
         else
             payload = g_app.wifi_qr_payload;
         draw_real_qr_to_fb(fb, payload);
