@@ -1,8 +1,18 @@
 name: CI
 
 # Pre-merge compile check. Complements build.yml, which builds and releases
-# only after a PR is merged. This runs on every PR and on pushes to main so a
+# on every push to main. This runs on every PR and on pushes to main so a
 # broken build is caught before it lands.
+#
+# Job naming: branch protection has a required status check named
+# "compile-check". That name must keep working even though we now build two
+# variants (standard/secure). Rather than relying on a matrix job (which
+# would produce "compile-check (standard)" / "compile-check (secure)" and
+# break the required check), the standard build keeps the literal job name
+# "compile-check", and the secure-boot build is a separate job
+# "compile-check-secure". Branch protection continues to require
+# "compile-check"; "compile-check-secure" can be added as a second required
+# check separately if desired.
 
 on:
   pull_request:
@@ -12,6 +22,9 @@ on:
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   compile-check:
@@ -34,16 +47,55 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .ccache
-          key: ccache-${{ runner.os }}-idf5.5.1-${{ github.sha }}
+          key: ccache-${{ runner.os }}-idf5.5.1-standard-${{ github.sha }}
           restore-keys: |
-            ccache-${{ runner.os }}-idf5.5.1-
+            ccache-${{ runner.os }}-idf5.5.1-standard-
 
-      - name: Build firmware (compile check)
+      - name: Build firmware (compile check, standard variant)
         shell: bash
         run: |
           . /opt/esp/idf/export.sh
           idf.py build
           ccache -s || true
+
+      - name: App size gate
+        shell: bash
+        run: .github/scripts/check_app_size.sh build/web_server.bin
+
+  compile-check-secure:
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:v5.5.1
+    env:
+      IDF_CCACHE_ENABLE: "1"
+      CCACHE_DIR: ${{ github.workspace }}/.ccache-secure
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fix git ownership
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache-secure
+          key: ccache-${{ runner.os }}-idf5.5.1-secure-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ runner.os }}-idf5.5.1-secure-
+
+      - name: Build firmware (compile check, secure-boot variant)
+        shell: bash
+        run: |
+          . /opt/esp/idf/export.sh
+          idf.py -B build-secure \
+            -D SDKCONFIG=build-secure/sdkconfig \
+            -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.secure" \
+            build
+          ccache -s || true
+
+      - name: App size gate
+        shell: bash
+        run: .github/scripts/check_app_size.sh build-secure/web_server.bin
 
   host-tests:
     runs-on: ubuntu-latest

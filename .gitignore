@@ -1,4 +1,5 @@
 build/
+build-secure/
 log/
 sdkconfig
 sdkconfig.old
