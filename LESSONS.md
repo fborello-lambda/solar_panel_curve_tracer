@@ -18,6 +18,19 @@ The SH1106 OLED footprint on the PCB was placed mirrored, so the connector pins 
 
 **Next revision:** verify connector orientation against the physical module datasheet before placing the footprint, and add a pin-1 marker to the silkscreen.
 
+## C1, C2 and R8 missing their ground connection
+
+On the rev1 board, `C1`, `C2` and `R8` are part of the RC low-pass filter that
+turns the PWM load-control signal into the analog reference voltage feeding
+the op-amp's (U1A) non-inverting input, but the filter's return path to GND
+was left unconnected in the layout/schematic: none of the three net to
+ground. This was missed because nothing about the board flags an unconnected
+pin as an error by itself; it only shows up as filter/VCCS misbehavior on the
+bench.
+
+**Next revision:** tie C1, C2 and R8 to GND, and run a DRC/ERC check for
+unconnected pins before ordering.
+
 ## Secure Boot
 
 Secure Boot on ESP32 burns the public key digest into eFuses permanently. Once enabled it cannot be disabled, and flashing any firmware signed with a different key will cause the device to boot-loop and become unrecoverable. Losing the private signing key bricks the device.
