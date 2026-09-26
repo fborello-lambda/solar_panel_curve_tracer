@@ -273,8 +273,14 @@ void ui_on_button(void)
         if (g_app.ui_home_index == HOME_SECTION_MEASURE && g_app.ui_menu_index == 1)
         {
             measurement_request(false);
-            dynamic_load_enter();
-            ui_set_screen(UI_SCREEN_ACTION_DYNAMIC_LOAD);
+            if (dynamic_load_enter())
+            {
+                ui_set_screen(UI_SCREEN_ACTION_DYNAMIC_LOAD);
+            }
+            else
+            {
+                ESP_LOGW(TAG, "UI: dynamic load entry refused, staying on menu");
+            }
             return;
         }
 
