@@ -1,7 +1,7 @@
 name: Build
 
 # Builds both firmware variants on every push to main (docs-only changes are
-# ignored) and publishes a single "latest" release per commit, or can be run
+# ignored) and replaces the single rolling "firmware" release (older releases are deleted), or can be run
 # manually via workflow_dispatch.
 
 on:
@@ -140,7 +140,7 @@ jobs:
         id: version
         run: |
           SHORT_SHA=$(git rev-parse --short HEAD)
-          echo "tag=rev1.${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "tag=firmware" >> "$GITHUB_OUTPUT"
           echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Write release notes
@@ -150,9 +150,9 @@ jobs:
 
           | File | Who it's for |
           | --- | --- |
-          | \`app-standard.bin\` | Standard boards — OTA update via \`/ota\` |
-          | \`factory-standard.bin\` | Standard boards — full flash at offset \`0x0\` on a fresh/blank board over USB |
-          | \`storage.bin\` | Both variants — SPIFFS web UI files, flash/OTA after the app |
+          | \`app-standard.bin\` | Standard boards - OTA update via \`/ota\` |
+          | \`factory-standard.bin\` | Standard boards - full flash at offset \`0x0\` on a fresh/blank board over USB |
+          | \`storage.bin\` | Both variants - SPIFFS web UI files, flash/OTA after the app |
           | \`app-secure-boot.bin\` | **Maintainer's secure-boot board ONLY** |
 
           > **Warning:** \`app-secure-boot.bin\` is signed for the maintainer's one
@@ -177,14 +177,21 @@ jobs:
           ---
           EOF
 
+      # Keep exactly one release: drop the previous rolling release and its
+      # tag so the new one is created fresh on this commit.
+      - name: Delete previous release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release delete firmware --cleanup-tag --yes --repo "${{ github.repository }}" || true
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          name: ${{ steps.version.outputs.tag }}
+          name: Firmware ${{ steps.version.outputs.short_sha }}
+          target_commitish: ${{ github.sha }}
           make_latest: "true"
           body_path: release/RELEASE_BODY.md
-          generate_release_notes: true
           files: |
             release/app-standard.bin
             release/factory-standard.bin

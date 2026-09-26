@@ -19,7 +19,7 @@ idf.py -B "$BUILD_DIR" \
 # the secure overlay (e.g. after switching branches).
 if ! grep -q '^CONFIG_SECURE_BOOT=y' "${BUILD_DIR}/sdkconfig"; then
     echo "ERROR: ${BUILD_DIR}/sdkconfig does not have CONFIG_SECURE_BOOT=y." >&2
-    echo "Refusing to flash — this would not produce a signed image." >&2
+    echo "Refusing to flash - this would not produce a signed image." >&2
     exit 1
 fi
 

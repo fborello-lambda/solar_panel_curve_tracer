@@ -1,4 +1,4 @@
-# Secure Boot V2 (RSA) overlay — applies ONLY to the maintainer's one
+# Secure Boot V2 (RSA) overlay - applies ONLY to the maintainer's one
 # fused board. Build with:
 #   idf.py -B build-secure -D SDKCONFIG=build-secure/sdkconfig \
 #       -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.secure" build
