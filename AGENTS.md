@@ -103,10 +103,14 @@ Partition table offset: `0xD000` (pushed up to fit the secure-boot-signed bootlo
 - **OTA**: single-file app update via the `/ota` HTTP endpoint (`app-standard.bin`), no `idf.py ota` command. No
   app rollback: the newly flashed OTA slot is committed on the next boot.
 - **Auto-range sweep**: each trace probes Voc at zero load, then doubles the commanded PWM duty until the panel
-  collapses, to locate the knee of the I-V curve without an operator-entered current range. The sweep's 20 points
-  are then placed mostly across that knee (a coarse leg below it, most of the budget through it, a short tail up
-  to Isc), so a small panel still gets a well-resolved curve shape. The sweep hard-stops (aborts, keeping points
-  already recorded) if measured power reaches the shared 5000 mW power cap.
+  collapses, to locate the knee of the I-V curve without an operator-entered current range. From there, an adaptive
+  state machine (`sweep_adapt_*` in `components/sweep_plan`) places the sweep's 20 points by normalized arc length
+  along the curve (V/Voc, I/Isc), estimating the local slope and measured current gain from the last two points so
+  the steep part near Voc, the knee, and the flat part near Isc all get points for any Isc, from a few mA up to the
+  duty cap. Duty only ever steps up (the RC input filter drains slowly, so a descending step reads stale current).
+  The INA219's zero-current offset is measured at the Voc probe (duty 0, where the load draws nothing) and
+  subtracted from every reading in that sweep. The sweep hard-stops (aborts, keeping points already recorded) if
+  measured power reaches the shared 5000 mW power cap.
 
 ---
 

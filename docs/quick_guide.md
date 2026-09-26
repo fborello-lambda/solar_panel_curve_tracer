@@ -145,7 +145,7 @@ small solar panel, computing the maximum power point (MPP).
 
 1. Open-circuit voltage (Voc) is measured.
 2. The current range is found automatically.
-3. 20 points are recorded, most clustered near the knee of the curve.
+3. 20 points are recorded, spread along the whole curve shape (not just the knee).
 4. A full sweep takes about 10 to 15 seconds.
 
 ## Reading the result

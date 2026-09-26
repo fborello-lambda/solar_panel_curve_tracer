@@ -2,7 +2,7 @@
 
 An ESP32-C3 that traces the I-V curve of a small solar panel: it loads the panel with a
 PWM-controlled electronic load (op-amp VCCS + MOSFET), measures voltage and current with an
-INA219 sensor, and auto-ranges a 20-point sweep clustered around the curve's knee. Results are
+INA219 sensor, and auto-ranges a 20-point sweep spread by arc length along the curve. Results are
 served over the device's own Wi-Fi as a web UI (Chart.js), and a SH1106 OLED with a rotary
 encoder gives a local menu.
 
@@ -51,9 +51,11 @@ esptool.py --chip esp32c3 write_flash 0x0 factory-standard.bin
 
 Each trace auto-ranges: the firmware probes open-circuit voltage (Voc), then doubles the
 commanded load current until the panel collapses, locating the knee of the curve without the
-operator dialling in a current range. The 20 recorded points are then placed mostly across that
-knee, so a small panel (Isc around 50 mA with the lab practice setup) still gets a well-resolved
-curve shape rather than 20 points all past the cliff.
+operator dialling in a current range. From there, an adaptive stepper places the 20 recorded
+points by normalized arc length along the curve (voltage and current each scaled 0..1), so the
+steep part near Voc, the knee, and the flat part near Isc all get points regardless of the
+panel's actual Isc (a few mA up to the load's cap). Zero-current offset from the current sensor
+is measured at the Voc probe and subtracted from every point in the sweep.
 
 ## Build from source
 
