@@ -12,8 +12,6 @@ static pwm_controller_t s_pwm_controller;
 int pwm_controller_init(const pwm_controller_config_t *cfg)
 {
     pwm_controller_t *pc = &s_pwm_controller;
-    if (!pc)
-        return -1;
 
     if (cfg != NULL)
         pc->cfg = *cfg;
@@ -55,10 +53,12 @@ int pwm_controller_init(const pwm_controller_config_t *cfg)
     return 0;
 }
 
+// Returns the maximum duty count for the configured resolution (e.g. 8191
+// for 13-bit), not the resolution in bits.
 int pwm_controller_get_resolution(uint32_t *res)
 {
     pwm_controller_t *pc = &s_pwm_controller;
-    if (!pc || !res)
+    if (!res)
         return -1;
     *res = (1ULL << pc->cfg.duty_resolution) - 1ULL;
     return 0;
@@ -90,9 +90,6 @@ int pwm_controller_set_duty_in_res_steps(uint32_t duty_in_res_steps)
 {
     pwm_controller_t *pc = &s_pwm_controller;
 
-    if (!pc)
-        return -1;
-
     const uint32_t bits = pc->cfg.duty_resolution;
     if (bits == 0 || bits > 31) // guard against invalid/UB shift
         return -2;
@@ -107,17 +104,5 @@ int pwm_controller_set_duty_in_res_steps(uint32_t duty_in_res_steps)
         return -3;
     if (ledc_update_duty(pc->cfg.speed_mode, pc->cfg.channel) != ESP_OK)
         return -4;
-    return 0;
-}
-
-int pwm_controller_get_duty(uint32_t *duty_percent)
-{
-    pwm_controller_t *pc = &s_pwm_controller;
-
-    // ledc_get_duty(pc->cfg.speed_mode, pc->cfg.channel);
-
-    if (!pc || !duty_percent)
-        return -1;
-    *duty_percent = pc->duty_percent;
     return 0;
 }

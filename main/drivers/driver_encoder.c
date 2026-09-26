@@ -160,14 +160,25 @@ esp_err_t encoder_init(const encoder_config_t *cfg)
         return ESP_ERR_NO_MEM;
     }
 
-    gpio_config_t rotary_cfg = {
-        .pin_bit_mask = (1ULL << s_encoder.dt_pin) | (1ULL << s_encoder.clk_pin),
+    // DT is only sampled (as a level) from inside the CLK edge handler, so
+    // it needs no interrupt of its own; only CLK drives the ISR.
+    gpio_config_t dt_cfg = {
+        .pin_bit_mask = (1ULL << s_encoder.dt_pin),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = cfg->use_internal_pullups ? GPIO_PULLUP_ENABLE : GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    ESP_ERROR_CHECK(gpio_config(&dt_cfg));
+
+    gpio_config_t clk_cfg = {
+        .pin_bit_mask = (1ULL << s_encoder.clk_pin),
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = cfg->use_internal_pullups ? GPIO_PULLUP_ENABLE : GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_ANYEDGE,
     };
-    ESP_ERROR_CHECK(gpio_config(&rotary_cfg));
+    ESP_ERROR_CHECK(gpio_config(&clk_cfg));
 
     gpio_config_t sw_cfg = {
         .pin_bit_mask = (1ULL << s_encoder.sw_pin),
@@ -203,9 +214,4 @@ bool encoder_get_event(encoder_event_t *out_event, TickType_t wait_ticks)
     }
 
     return xQueueReceive(s_encoder.queue, out_event, wait_ticks) == pdTRUE;
-}
-
-int32_t encoder_get_position(void)
-{
-    return s_encoder.position;
 }
