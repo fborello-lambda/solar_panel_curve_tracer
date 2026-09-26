@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 
 typedef enum
 {
@@ -32,6 +33,13 @@ bool measurement_request_ex(bool start, measurement_refuse_reason_t *out_reason)
 const char *measurement_refuse_reason_str(measurement_refuse_reason_t reason);
 
 bool measurement_init_load_control_hw(void);
+
+/**
+ * @brief Debug: step the load from duty 0 to max_duty in fixed steps and log
+ * one raw CSV line per step (no calibration, no db). Refuses while a sweep
+ * or dynamic load is active.
+ */
+bool measurement_raw_scan(uint32_t max_duty, uint32_t step);
 
 void measurement_set_producer_mode(curve_producer_mode_t mode);
 curve_producer_mode_t measurement_get_producer_mode(void);

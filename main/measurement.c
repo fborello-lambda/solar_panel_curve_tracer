@@ -342,7 +342,12 @@ static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms, f
     float shunt_uV = (float)shunt_uV_sum / (float)valid;
     int shunt_mOhm = g_app.ina_cal.shunt_resistor_mOhm;
     float current_mA = (shunt_mOhm > 0) ? (shunt_uV / (float)shunt_mOhm) : 0.0f;
+    float raw_mA = current_mA;
     current_mA -= err_mA_per_V * (bus_mV / 1000.0f);
+    // Machine-readable dump for debugging over USB serial:
+    // CSV,duty,bus_mV,shunt_uV,raw_mA,corrected_mA
+    ESP_LOGI(TAG, "CSV,%lu,%.1f,%.1f,%.3f,%.3f", (unsigned long)duty_steps, (double)bus_mV,
+             (double)shunt_uV, (double)raw_mA, (double)current_mA);
     float voltage_mV = bus_mV - (shunt_uV / 1000.0f);
 
     if (voltage_mV < 0.0f)
@@ -572,4 +577,28 @@ static void producer_task(void *arg)
 
     producer_finish("producer_task");
     vTaskDelete(NULL);
+}
+
+bool measurement_raw_scan(uint32_t max_duty, uint32_t step)
+{
+    if (g_app.measurement_running || g_app.dynamic_load_active || !g_app.ina_ready || !g_app.pwm_ready)
+    {
+        ESP_LOGW(TAG, "raw_scan: refused (running=%d dynamic=%d ina=%d pwm=%d)", g_app.measurement_running,
+                 g_app.dynamic_load_active, g_app.ina_ready, g_app.pwm_ready);
+        return false;
+    }
+    if (step == 0)
+        step = 1;
+
+    ESP_LOGI(TAG, "raw_scan: duty 0..%lu step %lu (CSV,duty,bus_mV,shunt_uV,raw_mA,corrected_mA)",
+             (unsigned long)max_duty, (unsigned long)step);
+    for (uint32_t duty = 0; duty <= max_duty; duty += step)
+    {
+        float v, i_mA, p_mW;
+        if (measure_point(duty, SWEEP_SETTLE_MS, 0.0f, &v, &i_mA, &p_mW) != MEASURE_OK)
+            break;
+    }
+    pwm_controller_set_duty_in_res_steps(0);
+    ESP_LOGI(TAG, "raw_scan: done");
+    return true;
 }
