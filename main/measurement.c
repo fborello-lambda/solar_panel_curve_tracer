@@ -104,7 +104,7 @@ const char *measurement_get_producer_mode_label(void)
     return (s_producer_mode == CURVE_PRODUCER_DUMMY) ? "DEMO" : "REAL";
 }
 
-bool measurement_init_load_control_hw(bool strict_mode)
+bool measurement_init_load_control_hw(void)
 {
     g_app.pwm_ready = false;
     g_app.ina_ready = false;
@@ -113,7 +113,7 @@ bool measurement_init_load_control_hw(bool strict_mode)
     if (pwm_ret != 0)
     {
         ESP_LOGE(TAG, "pwm_controller_init failed: %d", pwm_ret);
-        return !strict_mode;
+        return false;
     }
     g_app.pwm_ready = true;
 
@@ -121,21 +121,21 @@ bool measurement_init_load_control_hw(bool strict_mode)
     if (ret != ESP_OK)
     {
         ESP_LOGE(TAG, "I2C bus init failed: %s", esp_err_to_name(ret));
-        return !strict_mode;
+        return false;
     }
 
     ret = ina219_init_on_bus(g_app.i2c_bus, &g_app.ina_dev, I2C_FREQ_HZ, INA219_ADDRESS_DEFAULT);
     if (ret != ESP_OK)
     {
         ESP_LOGE(TAG, "ina219_init_on_bus failed: %s", esp_err_to_name(ret));
-        return !strict_mode;
+        return false;
     }
 
     ret = ina219_calibrate_for_32V_10A(g_app.ina_dev, &g_app.ina_cal);
     if (ret != ESP_OK)
     {
         ESP_LOGE(TAG, "ina219_calibrate_for_32V_10A failed");
-        return !strict_mode;
+        return false;
     }
 
     ESP_LOGI(TAG, "driver_ina219: Calibration Done -- Current_Divider_mA=%d  Power_Multiplier_mW=%d  Current_LSB=%.6f A/bit CAL=0x%04X",
@@ -168,6 +168,13 @@ static bool measurement_start_locked(void)
     if (g_app.dynamic_load_active)
     {
         ESP_LOGW(TAG, "measurement_start_locked: refused, dynamic load screen is active");
+        return false;
+    }
+
+    if (s_producer_mode == CURVE_PRODUCER_REAL && (!g_app.ina_ready || !g_app.pwm_ready))
+    {
+        ESP_LOGW(TAG, "measurement_start_locked: refused REAL mode, hardware not ready (ina_ready=%d pwm_ready=%d)",
+                 g_app.ina_ready, g_app.pwm_ready);
         return false;
     }
 
@@ -207,7 +214,7 @@ static bool measurement_stop_locked(void)
 
 static void producer_finish(const char *task_name)
 {
-    if (g_app.state_mtx && xSemaphoreTake(g_app.state_mtx, pdMS_TO_TICKS(10)) == pdTRUE)
+    if (g_app.state_mtx && xSemaphoreTake(g_app.state_mtx, pdMS_TO_TICKS(200)) == pdTRUE)
     {
         g_app.producer_task = NULL;
         measurement_apply_state_locked(false);
@@ -216,9 +223,12 @@ static void producer_finish(const char *task_name)
     }
     else
     {
+        ESP_LOGW(TAG, "%s: failed to take state mutex, finishing without it", task_name);
         g_app.producer_task = NULL;
         g_app.measurement_running = false;
         pwm_controller_set_duty(0);
+        led_clear(WS2812_GPIO);
+        app_display_mark_dirty();
     }
 
     ESP_LOGI(TAG, "%s: Deleting self", task_name);

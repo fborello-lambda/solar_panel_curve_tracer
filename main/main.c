@@ -1,4 +1,5 @@
 #include <esp_log.h>
+#include <esp_ota_ops.h>
 #include <esp_sleep.h>
 #include <esp_system.h>
 
@@ -17,12 +18,13 @@ static const char *TAG = "MAIN";
 
 void app_main(void)
 {
+    // Waking from deep sleep is already a full chip reset that re-enters
+    // app_main from scratch, so no extra esp_restart() is needed here; this
+    // just logs why we're booting.
     esp_sleep_wakeup_cause_t wakeup_cause = esp_sleep_get_wakeup_cause();
     if (wakeup_cause == ESP_SLEEP_WAKEUP_GPIO)
     {
         ESP_LOGI(TAG, "Wakeup cause: GPIO (encoder switch)");
-        // Force a clean boot path so UI/tasks/peripherals always start from scratch.
-        esp_restart();
     }
 
     g_app.state_mtx = xSemaphoreCreateMutex();
@@ -32,12 +34,21 @@ void app_main(void)
         return;
     }
 
-    if (!measurement_init_load_control_hw(true))
+    // Networking/HTTP/OTA must always come up, even if the load control
+    // hardware (PWM/INA219) is missing or faulty; do that init first and
+    // treat it as non-fatal.
+    system_init_all();
+
+    if (!measurement_init_load_control_hw())
     {
-        return;
+        ESP_LOGW(TAG, "Load control hardware not fully ready; REAL measurement mode will be refused");
     }
 
-    system_init_all();
+    esp_err_t rollback_ret = esp_ota_mark_app_valid_cancel_rollback();
+    if (rollback_ret != ESP_OK)
+    {
+        ESP_LOGD(TAG, "esp_ota_mark_app_valid_cancel_rollback: %s", esp_err_to_name(rollback_ret));
+    }
 
     if (led_init(WS2812_GPIO) == ESP_OK)
     {
