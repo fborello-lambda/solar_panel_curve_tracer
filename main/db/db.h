@@ -1,9 +1,7 @@
 /*
- * In memory database for samples. It's a way to keep track of the state
- * of the system and share it across tasks.
- *
- * It also contains standalone variables to keep track of the state of the system.
- * These variables are accessed via getter/setter functions.
+ * In-memory circular buffer of (x,y) samples. It's a way to keep track of
+ * the current sweep's data and share it across tasks (producer, display,
+ * HTTP /data).
  *
  * Uses a mutex to protect access to the data.
  * Maybe not ideal for high-throughput, but sufficient for low-rate sampling.
