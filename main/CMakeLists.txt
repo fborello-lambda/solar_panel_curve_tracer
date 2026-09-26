@@ -34,13 +34,15 @@ idf_component_register(SRCS ${SRCS}
 set(WEB_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/web")
 # guide.pdf is deliberately NOT embedded: it barely gzips (already-compressed
 # PDF content) and its ~80 KB pushed the secure-boot variant over the app
-# partition size gate. /guide instead redirects to the hosted copy in the
-# repo (see server.c).
+# partition size gate. /guide now serves a compact embedded guide.html
+# instead (see server.c), with a link to the hosted docs/quick_guide.md.
 set(WEB_FILES
     "index.html"
     "script.js"
     "chart.umd.min.js"
     "ota.html"
+    "i18n.js"
+    "guide.html"
 )
 
 set(WEB_GZ_FILES "")

@@ -32,11 +32,10 @@ extern const uint8_t chart_umd_min_js_gz_start[] asm("_binary_chart_umd_min_js_g
 extern const uint8_t chart_umd_min_js_gz_end[] asm("_binary_chart_umd_min_js_gz_end");
 extern const uint8_t ota_html_gz_start[] asm("_binary_ota_html_gz_start");
 extern const uint8_t ota_html_gz_end[] asm("_binary_ota_html_gz_end");
-
-// The user guide PDF is not embedded (see main/CMakeLists.txt): it barely
-// gzips and its size threatened the secure-boot variant's flash budget.
-// /guide instead redirects to the hosted copy in the repo.
-#define GUIDE_REDIRECT_URL "https://github.com/fborello-lambda/solar_panel_curve_tracer/blob/main/docs/quick_guide.pdf"
+extern const uint8_t i18n_js_gz_start[] asm("_binary_i18n_js_gz_start");
+extern const uint8_t i18n_js_gz_end[] asm("_binary_i18n_js_gz_end");
+extern const uint8_t guide_html_gz_start[] asm("_binary_guide_html_gz_start");
+extern const uint8_t guide_html_gz_end[] asm("_binary_guide_html_gz_end");
 
 typedef struct
 {
@@ -51,6 +50,8 @@ static const static_route_t s_static_routes[] = {
     {"/script.js", script_js_gz_start, script_js_gz_end, "application/javascript"},
     {"/chart.js", chart_umd_min_js_gz_start, chart_umd_min_js_gz_end, "application/javascript"},
     {"/ota", ota_html_gz_start, ota_html_gz_end, "text/html; charset=utf-8"},
+    {"/i18n.js", i18n_js_gz_start, i18n_js_gz_end, "application/javascript"},
+    {"/guide", guide_html_gz_start, guide_html_gz_end, "text/html; charset=utf-8"},
 };
 #define STATIC_ROUTE_COUNT (sizeof(s_static_routes) / sizeof(s_static_routes[0]))
 
@@ -77,13 +78,6 @@ static esp_err_t static_get_handler(httpd_req_t *req)
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache");
     httpd_resp_set_hdr(req, "ETag", etag);
     return httpd_resp_send(req, (const char *)route->start, route->end - route->start);
-}
-
-static esp_err_t guide_get_handler(httpd_req_t *req)
-{
-    httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", GUIDE_REDIRECT_URL);
-    return httpd_resp_send(req, NULL, 0);
 }
 
 static esp_err_t data_get_handler(httpd_req_t *req)
@@ -487,7 +481,6 @@ esp_err_t server_init(void)
         httpd_register_uri_handler(server, &route);
     }
 
-    httpd_uri_t guide = {.uri = "/guide", .method = HTTP_GET, .handler = guide_get_handler};
     httpd_uri_t data = {.uri = "/data", .method = HTTP_GET, .handler = data_get_handler};
     httpd_uri_t meas_start = {.uri = "/measurement/start", .method = HTTP_POST, .handler = measurement_start_handler};
     httpd_uri_t meas_stop = {.uri = "/measurement/stop", .method = HTTP_POST, .handler = measurement_stop_handler};
@@ -496,7 +489,6 @@ esp_err_t server_init(void)
     httpd_uri_t version = {.uri = "/version", .method = HTTP_GET, .handler = version_get_handler};
     httpd_uri_t wifi_cfg = {.uri = "/wifi-config", .method = HTTP_POST, .handler = wifi_config_post_handler};
 
-    httpd_register_uri_handler(server, &guide);
     httpd_register_uri_handler(server, &data);
     httpd_register_uri_handler(server, &meas_start);
     httpd_register_uri_handler(server, &meas_stop);

@@ -81,6 +81,37 @@
     return;
   }
 
+  const i18n = window.i18n || { t: (k) => k, apply: () => {}, getLang: () => "en", setLang: () => {} };
+
+  // Language toggle
+  const langToggle = document.getElementById("langToggle");
+  function updateLangBtn() {
+    if (!langToggle) return;
+    langToggle.textContent = i18n.getLang() === "es" ? "EN" : "ES";
+  }
+  if (langToggle) {
+    langToggle.addEventListener("click", function () {
+      i18n.setLang(i18n.getLang() === "es" ? "en" : "es");
+    });
+  }
+  window.addEventListener("i18n:change", function () {
+    updateLangBtn();
+    if (typeof updateChartTheme === "function") updateChartTheme();
+    if (chart) {
+      chart.data.datasets[0].label = i18n.t("legend_i");
+      chart.data.datasets[1].label = i18n.t("legend_p");
+      chart.data.datasets[2].label = i18n.t("legend_mpp");
+      chart.options.scales.x.title.text = i18n.t("chart_axis_v");
+      chart.options.scales.y.title.text = i18n.t("chart_axis_i");
+      chart.options.scales.p.title.text = i18n.t("chart_axis_p");
+      chart.update("none");
+    }
+    updateStartBtn();
+    setStatus(lastStatusState, lastStatusLabelKey ? i18n.t(lastStatusLabelKey) : statusText.textContent);
+  });
+  i18n.apply();
+  updateLangBtn();
+
   const isTouch = "ontouchstart" in window || navigator.maxTouchPoints > 0;
 
   function showError(msg) {
@@ -111,7 +142,7 @@
   let updateChartTheme = null;
 
   if (!window.Chart) {
-    showError("Chart.js failed to load.");
+    showError(i18n.t("err_chart_load"));
   } else {
     const ctx = canvas.getContext("2d");
     const colors = readChartColors();
@@ -121,7 +152,7 @@
       data: {
         datasets: [
           {
-            label: "I(V)",
+            label: i18n.t("legend_i"),
             data: [],
             parsing: false,
             borderColor: colors.i,
@@ -134,7 +165,7 @@
             yAxisID: "y",
           },
           {
-            label: "P(V)",
+            label: i18n.t("legend_p"),
             data: [],
             parsing: false,
             borderColor: colors.p,
@@ -148,7 +179,7 @@
             yAxisID: "p",
           },
           {
-            label: "MPP",
+            label: i18n.t("legend_mpp"),
             data: [],
             parsing: false,
             showLine: false,
@@ -171,17 +202,17 @@
           tooltip: {
             enabled: true,
             callbacks: {
-              title: (items) => "V: " + Number(items[0]?.raw?.x ?? 0).toFixed(3) + " V",
+              title: (items) => i18n.t("tooltip_v") + ": " + Number(items[0]?.raw?.x ?? 0).toFixed(3) + " V",
               label: (c) => {
                 const raw = c.raw || {};
-                if (c.dataset.label === "I(V)") {
-                  return "I: " + Number(raw.y).toFixed(3) + " mA";
-                } else if (c.dataset.label === "P(V)") {
-                  return "P: " + Number(raw.y).toFixed(3) + " mW";
-                } else if (c.dataset.label === "MPP") {
+                if (c.dataset.label === i18n.t("legend_i")) {
+                  return i18n.t("tooltip_i") + ": " + Number(raw.y).toFixed(3) + " mA";
+                } else if (c.dataset.label === i18n.t("legend_p")) {
+                  return i18n.t("tooltip_p") + ": " + Number(raw.y).toFixed(3) + " mW";
+                } else if (c.dataset.label === i18n.t("legend_mpp")) {
                   const v = Number(raw.x || 0);
                   const p = Number(raw.y || 0);
-                  return "MPP: " + v.toFixed(3) + " V, " + p.toFixed(3) + " mW";
+                  return i18n.t("tooltip_mpp") + ": " + v.toFixed(3) + " V, " + p.toFixed(3) + " mW";
                 }
                 return c.formattedValue;
               },
@@ -192,21 +223,21 @@
           x: {
             type: "linear",
             beginAtZero: true,
-            title: { display: true, text: "V [V]", color: colors.tick },
+            title: { display: true, text: i18n.t("chart_axis_v"), color: colors.tick },
             ticks: { color: colors.tick },
             grid: { color: colors.grid },
           },
           y: {
             position: "left",
             beginAtZero: true,
-            title: { display: true, text: "I [mA]", color: colors.i },
+            title: { display: true, text: i18n.t("chart_axis_i"), color: colors.i },
             ticks: { color: colors.i },
             grid: { color: colors.grid },
           },
           p: {
             position: "right",
             beginAtZero: true,
-            title: { display: true, text: "P [mW]", color: colors.p },
+            title: { display: true, text: i18n.t("chart_axis_p"), color: colors.p },
             ticks: { color: colors.p },
             grid: { drawOnChartArea: false },
           },
@@ -246,57 +277,89 @@
   // Status pill
   const statusPill = document.getElementById("statusPill");
   const statusText = document.getElementById("statusText");
+  const sensorNote = document.getElementById("sensorNote");
+  let lastStatusState = "idle";
+  let lastStatusLabelKey = "status_idle";
 
   function setStatus(state, label) {
+    lastStatusState = state;
     if (statusPill) statusPill.setAttribute("data-state", state);
     if (statusText) statusText.textContent = label;
   }
 
-  // Start/Stop measurement
-  const START_MEASUREMENT_POST_ENDPOINT = "/start-measurement";
+  const REASON_KEY_BY_TEXT = {
+    "already running": "err_reason_already_running",
+    "dynamic load active": "err_reason_dynamic_load_active",
+    "sensor not ready": "err_reason_sensor_not_ready",
+  };
+  function reasonText(raw) {
+    const key = REASON_KEY_BY_TEXT[raw];
+    return key ? i18n.t(key) : raw || i18n.t("err_reason_unknown");
+  }
+
+  // Start/Stop measurement, driven by server state via /status
   const startMeasBtn = document.getElementById("startMeasBtn");
   let measuring = false;
 
   function updateStartBtn() {
     if (!startMeasBtn) return;
-    startMeasBtn.textContent = measuring ? "Stop" : "Start measurement";
+    startMeasBtn.textContent = measuring ? i18n.t("stop_measurement") : i18n.t("start_measurement");
   }
 
   async function startMeas() {
     if (!startMeasBtn) return;
+    const endpoint = measuring ? "/measurement/stop" : "/measurement/start";
     try {
       startMeasBtn.disabled = true;
-      const resp = await fetch(START_MEASUREMENT_POST_ENDPOINT, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-
-      if (!resp.ok) {
-        const msg = await resp.text().catch(() => resp.statusText);
-        throw new Error(msg || "HTTP " + resp.status);
-      }
+      const resp = await fetch(endpoint, { method: "POST" });
       const payload = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        lastStatusLabelKey = null;
+        setStatus("error", i18n.t("status_error"));
+        showError(i18n.t("err_start_stop") + reasonText(payload.error));
+        return;
+      }
       if (typeof payload.running === "boolean") {
         measuring = payload.running;
-        setStatus(measuring ? "measuring" : "idle", measuring ? "Measuring" : "Idle");
+        lastStatusLabelKey = measuring ? "status_measuring" : "status_idle";
+        setStatus(measuring ? "measuring" : "idle", i18n.t(lastStatusLabelKey));
         showError(null);
-      } else if (payload.error) {
-        throw new Error(payload.error);
-      } else {
-        setStatus("idle", "Idle");
       }
     } catch (e) {
-      setStatus("error", "Error");
-      showError("Start/stop failed: " + (e.message || e));
+      lastStatusLabelKey = null;
+      setStatus("error", i18n.t("status_error"));
+      showError(i18n.t("err_start_stop") + (e.message || e));
     } finally {
       startMeasBtn.disabled = false;
       updateStartBtn();
+      pollStatus();
     }
   }
   if (startMeasBtn) {
     startMeasBtn.addEventListener("click", startMeas);
   }
+
+  // /status polling: every ~2s, keeps the pill and start/stop button in
+  // sync with what the firmware is actually doing.
+  async function pollStatus() {
+    try {
+      const r = await fetch("/status", { cache: "no-store" });
+      if (!r.ok) return;
+      const s = await r.json();
+      measuring = !!s.running;
+      lastStatusLabelKey = measuring ? "status_measuring" : "status_idle";
+      setStatus(measuring ? "measuring" : "idle", i18n.t(lastStatusLabelKey));
+      updateStartBtn();
+      if (sensorNote) {
+        const showNote = s.mode === "REAL" && s.ina_ready === false;
+        sensorNote.style.display = showNote ? "flex" : "none";
+      }
+    } catch (e) {
+      // leave last known state; the /data poller already surfaces connection errors
+    }
+  }
+  pollStatus();
+  setInterval(pollStatus, 2000);
 
   // Summary elements
   const vocEl = document.getElementById("voc");
@@ -304,6 +367,7 @@
   const pmaxEl = document.getElementById("pmax");
   const mpptCurrentEl = document.getElementById("mpptCurrent");
   const mpptVoltageEl = document.getElementById("mpptVoltage");
+  const iscLabelEl = document.getElementById("iscLabel");
 
   let lastMpp = null;
 
@@ -314,6 +378,8 @@
       if (pmaxEl) pmaxEl.textContent = "-- mW";
       if (mpptCurrentEl) mpptCurrentEl.textContent = "-- mA";
       if (mpptVoltageEl) mpptVoltageEl.textContent = "-- V";
+      if (iscLabelEl) iscLabelEl.setAttribute("data-i18n", "stat_isc");
+      i18n.apply();
       lastMpp = null;
       if (chart) chart.data.datasets[2].data = [];
       return;
@@ -331,6 +397,15 @@
     if (mpptCurrentEl) mpptCurrentEl.textContent = `${mpp.y.toFixed(3)} mA`;
     if (mpptVoltageEl) mpptVoltageEl.textContent = `${mpp.x.toFixed(3)} V`;
 
+    // When the lowest recorded voltage is well above zero (>5% of Voc), this
+    // isn't a true short-circuit current: label it as the current at the
+    // lowest swept voltage instead of Isc.
+    if (iscLabelEl) {
+      const isRealIsc = voc.x <= 0 || isc.x <= 0.05 * voc.x;
+      iscLabelEl.setAttribute("data-i18n", isRealIsc ? "stat_isc" : "stat_isc_vmin");
+    }
+    i18n.apply();
+
     lastMpp = { x: mpp.x, y: mpp.x * mpp.y };
     if (chart) chart.data.datasets[2].data = [lastMpp];
   }
@@ -338,12 +413,16 @@
   // polling state
   let currentCount = 0;
   const DEFAULT_POLL_MS = isTouch ? 800 : 400;
+  const IDLE_POLL_MS = isTouch ? 5000 : 3000;
   let pollIntervalMs = DEFAULT_POLL_MS;
 
   async function tick() {
     try {
       const url = "/data?have=" + currentCount;
       const r = await fetch(url, { cache: "no-store" });
+      if (!r.ok) {
+        throw new Error("HTTP " + r.status);
+      }
       const txt = await r.text();
       if (!txt) {
         throw new Error("empty response");
@@ -376,7 +455,10 @@
         }
         const serverCount = Number.isFinite(small.count) ? small.count : 0;
 
-        if (serverCount > currentCount) {
+        if (serverCount === 0 && currentCount === 0) {
+          // Nothing has ever been measured: back off quietly, no warnings.
+          pollIntervalMs = IDLE_POLL_MS;
+        } else if (serverCount > currentCount) {
           currentCount = 0;
           pollIntervalMs = DEFAULT_POLL_MS;
         } else if (serverCount === currentCount && currentCount > 0) {
@@ -390,7 +472,7 @@
     } catch (e) {
       console.error("tick failed", e);
       pollIntervalMs = Math.min(5000, pollIntervalMs + 500);
-      showError("Connection issue, retrying...");
+      showError(i18n.t("err_connection"));
     } finally {
       setTimeout(tick, pollIntervalMs);
     }
@@ -405,7 +487,7 @@
       try {
         const points = (chart && chart.data.datasets[0].data) || [];
         if (!points.length) {
-          showError("No data to export yet.");
+          showError(i18n.t("err_no_csv_data"));
           return;
         }
         let csv = "V,I_mA,P_mW\n";
@@ -424,7 +506,7 @@
         a.remove();
         setTimeout(() => URL.revokeObjectURL(a.href), 1000);
       } catch (e) {
-        showError("CSV export failed: " + (e.message || e));
+        showError(i18n.t("err_csv_failed") + (e.message || e));
       }
     });
   }
