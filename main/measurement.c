@@ -300,7 +300,11 @@ static bool sleep_chunked_checking_stop(uint32_t ms)
 // fast as I2C allows) — 100 ms spans an integer number of half-cycles of
 // both 50 Hz and 60 Hz mains flicker, so ripple from a lamp cancels out.
 // Used by both auto-range probes and recorded sweep points.
-static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms,
+// `i_offset_mA` is the INA219 zero-current offset (see the Voc probe in
+// auto_range()) and is subtracted from every reading before the
+// negative-current clamp; pass 0 when the offset isn't known yet (the Voc
+// probe itself).
+static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms, float i_offset_mA,
                                        float *out_v, float *out_i_mA, float *out_power_mW)
 {
     pwm_controller_set_duty_in_res_steps(duty_steps);
@@ -339,6 +343,7 @@ static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms,
     float shunt_uV = (float)shunt_uV_sum / (float)valid;
     int shunt_mOhm = g_app.ina_cal.shunt_resistor_mOhm;
     float current_mA = (shunt_mOhm > 0) ? (shunt_uV / (float)shunt_mOhm) : 0.0f;
+    current_mA -= i_offset_mA;
     float voltage_mV = bus_mV - (shunt_uV / 1000.0f);
 
     if (voltage_mV < 0.0f)
@@ -363,15 +368,23 @@ static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms,
 // SWEEP_COLLAPSE_PERCENT_OF_VOC of Voc). Probe points are not recorded in
 // db. Returns false if the sweep should abort (no panel, stop requested, or
 // a safety breach).
-static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, float *out_voc_mv)
+static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, float *out_voc_mv,
+                        float *out_offset_mA, float *out_isc_mA)
 {
     sweep_range_t sr;
     sweep_range_begin(&sr, pwm_res, DB_MAX_SAMPLES);
 
-    float voc_v, dummy_i, dummy_p;
-    measure_result_t r = measure_point(0, SWEEP_SETTLE_MS, &voc_v, &dummy_i, &dummy_p);
+    // At duty 0 the load draws nothing, so whatever the INA219 reports here
+    // is purely its own zero-current offset error (typ +/-10 uV, up to
+    // 100 uV max on this 10 mOhm shunt, i.e. up to several mA). Stash it and
+    // subtract it from every later reading in this sweep.
+    float voc_v, offset_i_mA, dummy_p;
+    measure_result_t r = measure_point(0, SWEEP_SETTLE_MS, 0.0f, &voc_v, &offset_i_mA, &dummy_p);
     if (r != MEASURE_OK)
         return false;
+
+    *out_offset_mA = offset_i_mA;
+    ESP_LOGI(TAG, "auto_range: INA219 zero-current offset = %.2f mA", offset_i_mA);
 
     float voc_mV = voc_v * 1000.0f;
     *out_voc_mv = voc_mV;
@@ -390,7 +403,7 @@ static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, 
     for (;;)
     {
         float v, i_mA, p_mW;
-        r = measure_point(sr.duty, SWEEP_SETTLE_MS, &v, &i_mA, &p_mW);
+        r = measure_point(sr.duty, SWEEP_SETTLE_MS, offset_i_mA, &v, &i_mA, &p_mW);
         if (r != MEASURE_OK)
             return false;
 
@@ -417,6 +430,7 @@ static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, 
 
     *out_top = sr.top;
     *out_knee = sr.knee;
+    *out_isc_mA = sr.isc_mA;
     return true;
 }
 
@@ -475,8 +489,8 @@ static void producer_task(void *arg)
     ESP_LOGI(TAG, "producer_task: starting auto-range");
 
     uint32_t top = 0, knee = 0;
-    float voc_mV = 0.0f;
-    if (!auto_range(pwm_res, &top, &knee, &voc_mV))
+    float voc_mV = 0.0f, offset_mA = 0.0f, isc_mA = 0.0f;
+    if (!auto_range(pwm_res, &top, &knee, &voc_mV, &offset_mA, &isc_mA))
     {
         ESP_LOGW(TAG, "producer_task: auto-range aborted, recording nothing");
         ESP_LOGI(TAG, "producer_task stack high water mark: %u words", (unsigned)uxTaskGetStackHighWaterMark(NULL));
@@ -485,12 +499,13 @@ static void producer_task(void *arg)
         return;
     }
 
-    ESP_LOGI(TAG, "producer_task: Starting data production (top=%lu knee=%lu)",
-             (unsigned long)top, (unsigned long)knee);
+    ESP_LOGI(TAG, "producer_task: Starting data production (top=%lu knee=%lu isc=%.1f mA)",
+             (unsigned long)top, (unsigned long)knee, (double)isc_mA);
 
-    uint32_t duties[DB_MAX_SAMPLES];
-    sweep_plan_build(top, knee, duties, DB_MAX_SAMPLES);
+    sweep_adapt_t adapt;
+    sweep_adapt_begin(&adapt, voc_mV, isc_mA, knee, top, DB_MAX_SAMPLES);
 
+    uint32_t duty = 0;
     for (int step = 0; step < DB_MAX_SAMPLES; step++)
     {
         if (g_app.measurement_stop_requested)
@@ -499,15 +514,13 @@ static void producer_task(void *arg)
             break;
         }
 
-        uint32_t duty = duties[step];
-
         // Step 0 (duty 0) after auto-range's high-duty last probe needs a
         // longer settle so it reads a true open-circuit voltage instead of
         // the RC filter still draining down.
         uint32_t settle_ms = (step == 0) ? SWEEP_FIRST_POINT_SETTLE_MS : SWEEP_SETTLE_MS;
 
         float v, i_mA, p_mW;
-        measure_result_t r = measure_point(duty, settle_ms, &v, &i_mA, &p_mW);
+        measure_result_t r = measure_point(duty, settle_ms, offset_mA, &v, &i_mA, &p_mW);
 
         if (r == MEASURE_STOP_REQUESTED)
         {
@@ -527,6 +540,8 @@ static void producer_task(void *arg)
             break;
         }
 
+        uint32_t next_duty = sweep_adapt_next(&adapt, v * 1000.0f, i_mA);
+
         if (!db_add(v, i_mA))
         {
             ESP_LOGW(TAG, "producer_task: db_add failed, dropping sample (v=%.3f,i=%.3f)", v, i_mA);
@@ -536,6 +551,13 @@ static void producer_task(void *arg)
             ESP_LOGI(TAG, "producer_task: point %d duty=%lu V=%.3f I=%.3f mA P=%.1f mW",
                      step, (unsigned long)duty, v, i_mA, p_mW);
         }
+
+        if (next_duty == SWEEP_ADAPT_DONE)
+        {
+            ESP_LOGI(TAG, "producer_task: adaptive sweep done after %d points", step + 1);
+            break;
+        }
+        duty = next_duty;
     }
 
     ESP_LOGI(TAG, "producer_task: Finished data production");
