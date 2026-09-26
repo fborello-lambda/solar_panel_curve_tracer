@@ -365,12 +365,24 @@ static esp_err_t wifi_config_post_handler(httpd_req_t *req)
     }
     buf[to_read] = '\0';
 
-    // TESTSTUB
-    cJSON *root = cJSON_CreateObject();
-    char tssid[64] = "test", tpass[64] = "";
-    if (buf[0]) { strncpy(tssid, buf, sizeof(tssid)-1); }
-    const char *ssid = tssid;
-    const char *password = tpass;
+    cJSON *root = cJSON_Parse(buf);
+    if (!root)
+    {
+        httpd_resp_set_status(req, "400 Bad Request");
+        return httpd_resp_send(req, "{\"error\":\"Invalid JSON\"}", HTTPD_RESP_USE_STRLEN);
+    }
+
+    char ssid_buf[64] = {0};
+    char pass_buf[64] = {0};
+    const cJSON *ssid_item = cJSON_GetObjectItemCaseSensitive(root, "ssid");
+    if (cJSON_IsString(ssid_item) && ssid_item->valuestring)
+        strncpy(ssid_buf, ssid_item->valuestring, sizeof(ssid_buf) - 1);
+    const cJSON *pass_item = cJSON_GetObjectItemCaseSensitive(root, "password");
+    if (cJSON_IsString(pass_item) && pass_item->valuestring)
+        strncpy(pass_buf, pass_item->valuestring, sizeof(pass_buf) - 1);
+
+    const char *ssid = ssid_buf;
+    const char *password = pass_buf;
     size_t ssid_len = strlen(ssid);
     size_t pass_len = strlen(password);
 
