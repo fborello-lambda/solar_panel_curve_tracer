@@ -3,109 +3,393 @@
 
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>OTA Update</title>
   <link rel="icon"
-    href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%2210 0 100 100%22><text y=%22.90em%22 font-size=%2290%22>✈️</text></svg>">
-  </link>
+    href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%2210 0 100 100%22><text y=%22.90em%22 font-size=%2290%22>%E2%9C%88%EF%B8%8F</text></svg>">
   <style>
+    :root {
+      --bg: #fcfcfb;
+      --card: #fcfcfb;
+      --border: #e4e4e7;
+      --fg: #171717;
+      --muted: #71717a;
+      --primary-bg: #262626;
+      --primary-fg: #fafafa;
+      --secondary-bg: #f4f4f5;
+      --secondary-fg: #262626;
+      --destructive: #dc2626;
+      --success: #16a34a;
+      --radius: 0.625rem;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #0b0f1a;
+        --card: #11141f;
+        --border: rgba(255, 255, 255, 0.10);
+        --fg: #f1f3f9;
+        --muted: #c7ccd6;
+        --primary-bg: #e5e5e5;
+        --primary-fg: #262626;
+        --secondary-bg: #2a2d36;
+        --secondary-fg: #fafafa;
+        --destructive: #f87171;
+        --success: #4ade80;
+      }
+    }
+
+    :root[data-theme="dark"] {
+      --bg: #0b0f1a;
+      --card: #11141f;
+      --border: rgba(255, 255, 255, 0.10);
+      --fg: #f1f3f9;
+      --muted: #c7ccd6;
+      --primary-bg: #e5e5e5;
+      --primary-fg: #262626;
+      --secondary-bg: #2a2d36;
+      --secondary-fg: #fafafa;
+      --destructive: #f87171;
+      --success: #4ade80;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
     body {
-      font-family: monospace;
-      max-width: 520px;
-      margin: 2rem auto;
-      padding: 0 1rem;
-      line-height: 1.4;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      max-width: 560px;
+      margin: 0 auto;
+      padding: 16px 16px calc(24px + env(safe-area-inset-bottom));
+      line-height: 1.5;
+      background: var(--bg);
+      color: var(--fg);
+      min-height: 100vh;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
     }
 
     h2 {
-      margin: 0 0 0.75rem;
+      margin: 0;
+      font-size: 1.1rem;
     }
 
-    #version {
-      margin: 0.5rem 0 1rem;
-      color: #333;
-    }
-
-    input[type="file"] {
-      margin: 0.5rem 0 0.75rem;
-    }
-
-    button {
-      padding: 0.45rem 0.8rem;
+    .icon-btn {
+      width: 44px;
+      height: 44px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--secondary-bg);
+      color: var(--secondary-fg);
       cursor: pointer;
     }
 
-    #status {
-      margin-top: 1rem;
+    .icon-btn svg {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+    }
+
+    #version {
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin: 0 0 16px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      margin-bottom: 16px;
+    }
+
+    h3 {
+      margin: 0 0 8px;
+      font-size: 0.95rem;
+    }
+
+    p.hint {
+      color: var(--muted);
+      font-size: 0.82rem;
+      margin: 4px 0 12px;
+    }
+
+    .file-input {
+      display: block;
+      width: 100%;
+      padding: 10px;
+      border: 1px dashed var(--border);
+      border-radius: var(--radius);
+      background: var(--secondary-bg);
+      color: var(--fg);
+      font-size: 1rem;
+      margin-bottom: 10px;
+    }
+
+    button {
+      font-family: inherit;
+      font-size: 1rem;
+      border: 1px solid transparent;
+      border-radius: var(--radius);
+      cursor: pointer;
+      min-height: 44px;
+      padding: 10px 18px;
+      width: 100%;
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    button:focus-visible,
+    input:focus-visible,
+    a:focus-visible {
+      outline: 2px solid var(--fg);
+      outline-offset: 2px;
+    }
+
+    .btn-primary {
+      background: var(--primary-bg);
+      color: var(--primary-fg);
+      font-weight: 600;
+    }
+
+    .progress-wrap {
+      margin-top: 10px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--secondary-bg);
+      overflow: hidden;
+      display: none;
+    }
+
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: var(--primary-bg);
+      transition: width 120ms ease;
+    }
+
+    .status {
+      margin-top: 10px;
+      font-size: 0.88rem;
       white-space: pre-wrap;
-      color: #333;
+    }
+
+    .status.ok {
+      color: var(--success);
+    }
+
+    .status.err {
+      color: var(--destructive);
+    }
+
+    .reboot-note {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+
+    footer {
+      text-align: center;
+      margin-top: 8px;
+    }
+
+    footer a {
+      color: var(--fg);
     }
   </style>
 </head>
 
 <body>
-  <h2>OTA Firmware Update</h2>
+  <header>
+    <h2>Firmware update</h2>
+    <button id="themeToggle" class="icon-btn" type="button" aria-label="Toggle dark mode">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+        stroke-linejoin="round">
+        <circle cx="12" cy="12" r="4"></circle>
+        <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4">
+        </path>
+      </svg>
+    </button>
+  </header>
+
   <p id="version">Loading version...</p>
 
-  <h3>App firmware (.bin)</h3>
-  <input id="binFile" type="file" accept=".bin">
-  <br>
-  <button id="uploadBtn" type="button">Upload and Flash</button>
-  <p id="status"></p>
+  <div class="card">
+    <h3>App firmware (.bin)</h3>
+    <p class="hint">Flashes the next OTA slot and reboots into it.</p>
+    <input id="binFile" class="file-input" type="file" accept=".bin">
+    <button id="uploadBtn" class="btn-primary" type="button">Upload and flash</button>
+    <div class="progress-wrap" id="progressWrap"><div class="progress-bar" id="progressBar"></div></div>
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+    <p class="reboot-note">The device reboots automatically after a successful upload.</p>
+  </div>
 
-  <h3>Storage / SPIFFS (storage.bin)</h3>
-  <input id="spiffsFile" type="file" accept=".bin">
-  <br>
-  <button id="spiffsBtn" type="button">Upload Storage</button>
-  <p id="spiffsStatus"></p>
+  <div class="card">
+    <h3>Storage / SPIFFS (storage.bin)</h3>
+    <p class="hint">Erases and rewrites the web UI storage partition, then reboots.</p>
+    <input id="spiffsFile" class="file-input" type="file" accept=".bin">
+    <button id="spiffsBtn" class="btn-primary" type="button">Upload storage</button>
+    <div class="progress-wrap" id="spiffsProgressWrap"><div class="progress-bar" id="spiffsProgressBar"></div></div>
+    <p id="spiffsStatus" class="status" role="status" aria-live="polite"></p>
+    <p class="reboot-note">The device reboots automatically after a successful upload.</p>
+  </div>
+
+  <footer>
+    <a href="/">Back to measurements</a>
+  </footer>
 
   <script>
-    const versionEl = document.getElementById("version");
-    const statusEl = document.getElementById("status");
-    const fileEl = document.getElementById("binFile");
-    const uploadBtn = document.getElementById("uploadBtn");
-    const spiffsFileEl = document.getElementById("spiffsFile");
-    const spiffsBtn = document.getElementById("spiffsBtn");
-    const spiffsStatusEl = document.getElementById("spiffsStatus");
+    (function () {
+      "use strict";
 
-    async function loadVersion() {
-      try {
-        const res = await fetch("/version");
-        const data = await res.json();
-        versionEl.textContent = `Version: ${data.version} (${data.project})`;
-      } catch {
-        versionEl.textContent = "Version: unavailable";
+      const THEME_KEY = "solar-theme";
+      function getStoredTheme() {
+        try { return window.localStorage.getItem(THEME_KEY); } catch (e) { return null; }
       }
-    }
-
-    async function uploadBin(file, endpoint, statusEl) {
-      if (!file) {
-        statusEl.textContent = "Select a .bin file first.";
-        return;
+      function setStoredTheme(v) {
+        try { window.localStorage.setItem(THEME_KEY, v); } catch (e) { /* ignore */ }
       }
-      statusEl.textContent = `Uploading ${file.name} (${file.size} bytes)...`;
-      try {
-        const res = await fetch(endpoint, {
-          method: "POST",
-          headers: { "Content-Type": "application/octet-stream" },
-          body: file
+      function systemPrefersDark() {
+        try { return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches; } catch (e) { return false; }
+      }
+      function applyTheme() {
+        const stored = getStoredTheme();
+        if (stored === "light") document.documentElement.setAttribute("data-theme", "light");
+        else if (stored === "dark") document.documentElement.setAttribute("data-theme", "dark");
+        else document.documentElement.removeAttribute("data-theme");
+      }
+      applyTheme();
+      const themeToggle = document.getElementById("themeToggle");
+      if (themeToggle) {
+        themeToggle.addEventListener("click", function () {
+          const stored = getStoredTheme();
+          const isDark = stored === "dark" || (!stored && systemPrefersDark());
+          setStoredTheme(isDark ? "light" : "dark");
+          applyTheme();
         });
-        const data = await res.json();
-        statusEl.textContent = data.ok
-          ? "Done. Device is rebooting..."
-          : `Error: ${data.error || "Unknown error"}`;
-      } catch {
-        statusEl.textContent = "Upload failed or device rebooted.";
       }
-    }
 
-    uploadBtn.addEventListener("click", () =>
-      uploadBin(fileEl.files && fileEl.files[0], "/ota", statusEl));
+      const versionEl = document.getElementById("version");
 
-    spiffsBtn.addEventListener("click", () =>
-      uploadBin(spiffsFileEl.files && spiffsFileEl.files[0], "/ota/spiffs", spiffsStatusEl));
+      function setStatus(el, msg, kind) {
+        if (!el) return;
+        el.textContent = msg;
+        el.classList.remove("ok", "err");
+        if (kind === "ok") el.classList.add("ok");
+        if (kind === "err") el.classList.add("err");
+      }
 
-    loadVersion();
+      async function loadVersion() {
+        if (!versionEl) return;
+        try {
+          const res = await fetch("/version");
+          const data = await res.json();
+          versionEl.textContent = `Version: ${data.version} (${data.project})`;
+        } catch (e) {
+          versionEl.textContent = "Version: unavailable";
+        }
+      }
+
+      function uploadWithProgress(file, endpoint, statusEl, progressWrap, progressBar) {
+        return new Promise((resolve) => {
+          if (!file) {
+            setStatus(statusEl, "Select a .bin file first.", "err");
+            resolve(false);
+            return;
+          }
+          setStatus(statusEl, `Uploading ${file.name} (${file.size} bytes)...`, null);
+          if (progressWrap) progressWrap.style.display = "block";
+          if (progressBar) progressBar.style.width = "0%";
+
+          const xhr = new XMLHttpRequest();
+          xhr.open("POST", endpoint, true);
+          xhr.setRequestHeader("Content-Type", "application/octet-stream");
+
+          xhr.upload.onprogress = function (evt) {
+            if (evt.lengthComputable && progressBar) {
+              const pct = Math.round((evt.loaded / evt.total) * 100);
+              progressBar.style.width = pct + "%";
+            }
+          };
+
+          xhr.onload = function () {
+            let data = {};
+            try { data = JSON.parse(xhr.responseText); } catch (e) { /* ignore parse error */ }
+            if (data && data.ok) {
+              if (progressBar) progressBar.style.width = "100%";
+              setStatus(statusEl, "Done. Device is rebooting...", "ok");
+              resolve(true);
+            } else {
+              setStatus(statusEl, "Error: " + (data && data.error ? data.error : "Unknown error"), "err");
+              resolve(false);
+            }
+          };
+
+          xhr.onerror = function () {
+            setStatus(statusEl, "Upload failed or device rebooted.", "err");
+            resolve(false);
+          };
+
+          xhr.send(file);
+        });
+      }
+
+      const uploadBtn = document.getElementById("uploadBtn");
+      const fileEl = document.getElementById("binFile");
+      const statusEl = document.getElementById("status");
+      const progressWrap = document.getElementById("progressWrap");
+      const progressBar = document.getElementById("progressBar");
+
+      if (uploadBtn) {
+        uploadBtn.addEventListener("click", async function () {
+          uploadBtn.disabled = true;
+          await uploadWithProgress(
+            fileEl && fileEl.files && fileEl.files[0],
+            "/ota",
+            statusEl,
+            progressWrap,
+            progressBar
+          );
+          uploadBtn.disabled = false;
+        });
+      }
+
+      const spiffsBtn = document.getElementById("spiffsBtn");
+      const spiffsFileEl = document.getElementById("spiffsFile");
+      const spiffsStatusEl = document.getElementById("spiffsStatus");
+      const spiffsProgressWrap = document.getElementById("spiffsProgressWrap");
+      const spiffsProgressBar = document.getElementById("spiffsProgressBar");
+
+      if (spiffsBtn) {
+        spiffsBtn.addEventListener("click", async function () {
+          spiffsBtn.disabled = true;
+          await uploadWithProgress(
+            spiffsFileEl && spiffsFileEl.files && spiffsFileEl.files[0],
+            "/ota/spiffs",
+            spiffsStatusEl,
+            spiffsProgressWrap,
+            spiffsProgressBar
+          );
+          spiffsBtn.disabled = false;
+        });
+      }
+
+      loadVersion();
+    })();
   </script>
 </body>
 
