@@ -1,4 +1,4 @@
-# AGENTS.md — Solar Panel I-V Curve Tracer
+# AGENTS.md: Solar Panel I-V Curve Tracer
 
 ## Project overview
 
@@ -12,8 +12,9 @@ Target: **ESP32-C3**, ESP-IDF **5.5.1**, RISC-V toolchain.
 
 ```text
 main/
-  main.c              # app_main — hardware init, task launch, deep-sleep wakeup
-  measurement.c/h     # auto-ranged PWM sweep loop, INA219 acquisition, demo producer
+  main.c              # app_main: hardware init, task launch, deep-sleep wakeup
+  measurement.c/h     # auto-ranged PWM sweep loop, INA219 acquisition, demo producer,
+                       # producer task creation
   dynamic_load.c/h    # encoder-driven manual electronic load (independent of the sweep)
   ui.c/h              # OLED menu state machine and rendering
   app/
@@ -26,24 +27,26 @@ main/
     driver_encoder    # Rotary encoder GPIO ISR
     pwm_controller    # LEDC wrapper (GPIO 8, 8 kHz, 13-bit)
   utils/
-    init.c/h          # Wi-Fi soft-AP, NVS, SPIFFS, HTTP server startup
-    json_builder      # Lightweight JSON array serialiser for /data endpoint
+    init.c/h          # Wi-Fi soft-AP, NVS, HTTP server startup
     led_controller    # WS2812 RGB LED (GPIO 10)
   server/
-    server.c/h        # HTTP handlers: /, /data, /start-measurement, /ota, /ota/spiffs, /version, /wifi-config
+    server.c/h        # HTTP handlers, see endpoint table below
   db/
     db.c/h            # Circular sample buffer (max 20 points), mutex-protected
+  web/                # Web UI (HTML/CSS/JS + Chart.js), gzip-compressed and embedded
+                       # into the app image at build time, no SPIFFS and no
+                       # separate storage partition
 components/
   sweep_plan          # Pure sweep math: per-step duty placement + auto-range state
                        # machine. No hardware/FreeRTOS deps, so it builds on the
-                       # `linux` IDF target — this is what test/host/ exercises.
+                       # `linux` IDF target, which is what test/host/ exercises.
   json_builder        # Pure JSON array serialiser for /data (also linux-target testable)
 test/host/            # Standalone ESP-IDF project, `linux` target, Unity host tests
                        # for components/sweep_plan and components/json_builder
-spiffs/               # Static web files bundled into SPIFFS partition
-  index.html / script.js / chart.umd.min.js / ota.html
-partitions.csv        # Custom flash layout (see below)
-sdkconfig.defaults    # Canonical build config — edit this, not sdkconfig
+partitions.csv        # Custom flash layout (see below); storage partition unused
+sdkconfig.defaults    # Canonical build config: edit this, not sdkconfig
+sdkconfig.secure      # Secure Boot overlay, merged on top of sdkconfig.defaults for
+                       # the secure-boot build variant only
 ```
 
 ---
@@ -75,7 +78,9 @@ Partition table offset: `0xD000` (pushed up to fit the secure-boot-signed bootlo
 | phy_init | 0x14000 | 4 KB |
 | ota_0 | 0x20000 | 1088 KB |
 | ota_1 | 0x130000 | 1088 KB |
-| storage (SPIFFS) | 0x240000 | 1792 KB |
+| storage | 0x240000 | 1792 KB |
+
+`storage` is unused: the web UI is gzip-embedded in the app image, not served from SPIFFS.
 
 ---
 
@@ -84,20 +89,23 @@ Partition table offset: `0xD000` (pushed up to fit the secure-boot-signed bootlo
 - **Global state**: single `g_app` (app_state_t) struct; always acquire `g_app.state_mtx` before touching measurement fields.
 - **Producer/consumer**: producer task sweeps PWM and writes to `db`; display task reads from `db` and renders; HTTP `/data` snapshots `db`.
 - **Two producer modes**: `producer_task` (real INA219 hardware) and `dummy_producer_task` (synthetic curve for testing without hardware).
-- **Dynamic load**: encoder adjusts PWM setpoint live; soft power cap at 2000 mW with 150 mW hysteresis.
-- **OTA**: dual A/B slots; update via `/ota` HTTP endpoint or `idf.py ota`.
+- **Dynamic load**: encoder adjusts PWM setpoint live, capped at `DYNAMIC_LOAD_DUTY_MAX_PERCENT` (10% duty). It
+  shares the same `LOAD_POWER_LIMIT_MW` (5000 mW) power cap as the sweep, with a hysteresis margin
+  (`LOAD_POWER_NEAR_MARGIN_MW`) before backing off duty.
+- **OTA**: single-file app update via the `/ota` HTTP endpoint (`app-standard.bin`), no `idf.py ota` command. No
+  app rollback: the newly flashed OTA slot is committed on the next boot.
 - **Auto-range sweep**: each trace probes Voc at zero load, then doubles the commanded PWM duty until the panel
   collapses, to locate the knee of the I-V curve without an operator-entered current range. The sweep's 20 points
   are then placed mostly across that knee (a coarse leg below it, most of the budget through it, a short tail up
   to Isc), so a small panel still gets a well-resolved curve shape. The sweep hard-stops (aborts, keeping points
-  already recorded) if measured power reaches 5000 mW.
+  already recorded) if measured power reaches the shared 5000 mW power cap.
 
 ---
 
 ## Build & flash
 
 ```sh
-# First time — set target
+# First time: set target
 idf.py set-target esp32c3
 
 # Build
@@ -107,7 +115,7 @@ idf.py build
 idf.py flash monitor
 ```
 
-`sdkconfig` is generated from `sdkconfig.defaults` — do not commit `sdkconfig`.
+`sdkconfig` is generated from `sdkconfig.defaults`: do not commit `sdkconfig`.
 
 ---
 
@@ -129,22 +137,61 @@ idf.py build
 The firmware itself is only compile-checked in CI (`idf.py build` at the
 repo root); it has no on-device test harness.
 
+Required checks before merge: `compile-check` (standard variant), `compile-check-secure`
+(secure-boot variant), `host-tests`.
+
+---
+
+## Releases
+
+Every push to `main` replaces a single rolling GitHub release tagged `firmware`
+(https://github.com/fborello-lambda/solar_panel_curve_tracer/releases/latest) with three assets:
+
+- `app-standard.bin`: OTA update image for everyone, upload via `/ota`.
+- `factory-standard.bin`: full-flash image for a brand-new or blank board over USB:
+  `esptool.py --chip esp32c3 write_flash 0x0 factory-standard.bin`.
+- `app-secure-boot.bin`: signed OTA image for the maintainer's one Secure Boot board only.
+
 ---
 
 ## Secure boot
 
-RSA Secure Boot V2 is enabled. A signing key is required:
+Secure Boot is **not** enabled by default. There are two build variants, both from the same
+`sdkconfig.defaults`:
 
-```sh
-idf.py secure-generate-signing-key secure_boot_signing_key.pem
-```
+- **Standard** (`idf.py build`): no Secure Boot, no flash encryption. What everyone builds and
+  flashes.
+- **Secure** (`sdkconfig.defaults` plus the `sdkconfig.secure` overlay): RSA Secure Boot V2 for
+  the maintainer's one fused board only. Build with:
 
-Current mode: **Development** — flash encryption active but UART download still works.  
-`secure_boot_signing_key.pem` must never be lost; without it OTA updates are impossible on Release-mode devices.
+  ```sh
+  idf.py -B build-secure -D SDKCONFIG=build-secure/sdkconfig \
+      -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.secure" build
+  ```
+
+  and flash with `./secure_boot_flash.sh`, which refuses to run if the build isn't actually
+  Secure Boot signed.
+
+Flash encryption is not used in either variant. `secure_boot_signing_key.pem` is committed to the
+repo on purpose for this experimental board; see [LESSONS.md](LESSONS.md) for why that would be a
+bad idea in production. Once Secure Boot's public key digest is burned into a board's eFuses it
+cannot be disabled, and losing the signing key means that board can never be updated again.
 
 ---
 
 ## Web interface
 
-Connect to Wi-Fi SSID `ESP32_PLOT` (no password) then open `http://192.168.4.1`.  
-The `/data` endpoint returns `[{x: voltage, y: current}, ...]` as JSON.
+Connect to Wi-Fi SSID `ESP32_PLOT` (no password) then open `http://192.168.4.1`.
+
+| Endpoint | Method | Purpose |
+| --- | --- | --- |
+| `/` | GET | Web UI (ES/EN, light/dark theme) |
+| `/guide` | GET | Operator quick guide (ES/EN) |
+| `/ota` | GET | Firmware update page |
+| `/ota` | POST | Firmware update upload (single app image) |
+| `/data?have=N` | GET | Sample data; `[{x: voltage, y: current}, ...]`, or `{"count":N}` if the client already has all points |
+| `/status` | GET | Current measurement status |
+| `/measurement/start` | POST | Start a sweep |
+| `/measurement/stop` | POST | Stop a sweep |
+| `/version` | GET | Firmware version string |
+| `/wifi-config` | POST | Update the Wi-Fi soft-AP configuration |
