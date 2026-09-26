@@ -70,6 +70,13 @@ static void ui_mark_activity(void)
 
 // Returns true if the screen was off and this event should only wake it
 // (the event itself is swallowed, not applied to navigation/selection).
+//
+// This only requests the wake: display_task is the sole task that talks to
+// the OLED over I2C and the sole writer of g_app.display_off. If this
+// function poked the hardware and cleared display_off itself, it could race
+// with display_task's own screen-saver blanking (both tasks run at the same
+// priority on a single core), and a wake landing right as the screen saver
+// fires could leave the panel dark with fresh activity already discarded.
 static bool ui_wake_if_off(void)
 {
     if (!g_app.display_off)
@@ -77,11 +84,7 @@ static bool ui_wake_if_off(void)
         return false;
     }
 
-    g_app.display_off = false;
-    if (g_app.display.dev != NULL)
-    {
-        sh1106_set_display_on(&g_app.display, true);
-    }
+    g_app.display_wake_pending = true;
     app_display_mark_dirty();
     return true;
 }
@@ -196,6 +199,7 @@ void ui_init_state(void)
 
     g_app.last_activity_tick = xTaskGetTickCount();
     g_app.display_off = false;
+    g_app.display_wake_pending = false;
 
     app_display_mark_dirty();
 }

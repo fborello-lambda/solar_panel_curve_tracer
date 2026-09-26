@@ -72,6 +72,23 @@ static void display_task(void *arg)
             g_app.display_dirty = true;
         }
 
+        // Wake requested by the encoder task (ui_wake_if_off()). display_task
+        // is the sole writer of display_off and the sole caller of the
+        // sh1106 on/off commands, so this can't race with the blanking below.
+        if (g_app.display_wake_pending)
+        {
+            g_app.display_wake_pending = false;
+            if (g_app.display_off)
+            {
+                g_app.display_off = false;
+                if (g_app.display.dev != NULL)
+                {
+                    sh1106_set_display_on(&g_app.display, true);
+                }
+                g_app.display_dirty = true;
+            }
+        }
+
         // OLED screen saver: blank the panel after OLED_IDLE_TIMEOUT_S with no
         // encoder activity, to avoid burn-in. The dynamic load screen is
         // exempt (it's a live readout the operator watches without touching

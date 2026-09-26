@@ -75,6 +75,9 @@ typedef struct
     bool display_dirty;
     TickType_t last_activity_tick; // last encoder rotate/button, for the OLED screen saver
     bool display_off;              // true once the screen saver has blanked the OLED
+    bool display_wake_pending;     // set by the encoder task, consumed only by display_task:
+                                    // display_task is the sole owner of display_off and the
+                                    // only task allowed to talk to the OLED over I2C
 } app_state_t;
 
 extern app_state_t g_app;
