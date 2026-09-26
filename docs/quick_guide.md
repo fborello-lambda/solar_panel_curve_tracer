@@ -1,24 +1,27 @@
 ---
-geometry: a4paper, margin=1.5cm
+geometry: a4paper, margin=1.3cm
 fontsize: 9pt
 mainfont: DejaVu Sans
 header-includes: |
+  \usepackage{graphicx}
   \usepackage{titlesec}
   \usepackage{enumitem}
   \usepackage{float}
   \usepackage{caption}
   \captionsetup{labelformat=empty}
   \floatplacement{figure}{H}
-  \setlength{\textfloatsep}{4pt}
-  \setlength{\intextsep}{2pt}
-  \setlength{\abovecaptionskip}{2pt}
+  \setlength{\textfloatsep}{1pt}
+  \setlength{\intextsep}{0pt}
+  \setlength{\floatsep}{1pt}
+  \setlength{\abovecaptionskip}{1pt}
   \setlength{\belowcaptionskip}{0pt}
-  \titlespacing*{\section}{0pt}{3pt}{1pt}
-  \titlespacing*{\subsection}{0pt}{3pt}{1pt}
+  \titlespacing*{\section}{0pt}{2pt}{1pt}
+  \titlespacing*{\subsection}{0pt}{2pt}{1pt}
   \setlist{itemsep=0pt,parsep=0pt,topsep=1pt,partopsep=0pt}
-  \setlength{\parskip}{1.5pt}
+  \setlength{\parskip}{1pt}
   \setlength{\parindent}{0pt}
   \renewcommand{\arraystretch}{0.85}
+  \linespread{0.93}
   \pagenumbering{gobble}
 ---
 
@@ -37,15 +40,10 @@ panel solar pequeño, calculando el punto de máxima potencia (MPP).
 - Este prototipo no tiene interruptor de encendido: desconecte la batería
   para apagarlo.
 
-## Conectar el panel
+## Conectar el panel y encender
 
-- Conecte el terminal positivo del panel a **PV+**.
-- Conecte el terminal negativo del panel a **PV-**.
-
-## Encendido
-
-- Conecte la batería. El dispositivo arranca solo y muestra el menú en la
-  pantalla OLED.
+- Conecte el terminal positivo del panel a **PV+** y el negativo a **PV-**.
+- Conecte la batería: el dispositivo arranca solo y muestra el menú OLED.
 
 ## Medir desde la pantalla OLED
 
@@ -58,7 +56,9 @@ panel solar pequeño, calculando el punto de máxima potencia (MPP).
 
 1. Conéctese a la red Wi-Fi **ESP32_PLOT** (sin contraseña).
 2. Abra `http://192.168.4.1` en el navegador.
-3. Presione **Start Measurement**.
+3. Presione **Start** para iniciar el barrido y **Stop** para detenerlo
+   (selector de idioma ES/EN y tema claro/oscuro incluidos).
+4. Guía completa: `http://192.168.4.1/guide`, u OLED **NETWORK > SHOW GUIDE QR**.
 
 ## Qué sucede durante un barrido
 
@@ -76,7 +76,8 @@ panel solar pequeño, calculando el punto de máxima potencia (MPP).
 - La forma general de la curva indica el estado del panel.
 - Setup de la práctica de laboratorio: Isc aprox. 50 mA, resolución aprox. 1 mA.
 
-![Ejemplo de curva I-V](img/iv_example.png){width=34%}
+\begin{center}\includegraphics[width=0.34\textwidth]{docs/img/iv_example.png}\\[-2pt]{\small Ejemplo de curva I-V}\end{center}
+\vspace{-14pt}
 
 ## Consejos
 
@@ -93,9 +94,15 @@ panel solar pequeño, calculando el punto de máxima potencia (MPP).
 | El barrido se detiene antes | Se alcanzó el límite de seguridad de 5 W |
 | La página web está vacía | Reconéctese a la red Wi-Fi ESP32_PLOT |
 
-## Modo de bajo consumo
+## Actualizar firmware, bajo consumo y guía en línea
 
-El dispositivo despierta al presionar el botón del encoder.
+- **OTA**: descargue `app-standard.bin` de la última versión en GitHub,
+  conéctese a **ESP32_PLOT**, abra `http://192.168.4.1/ota` (o QR en OLED
+  **SYSTEM > OTA**), suba el archivo y espere el reinicio (~30 s).
+- **Bajo consumo**: OLED **SYSTEM > DEEP SLEEP**; despierta con el botón
+  del encoder.
+- **Guía en línea** (QR a la derecha): github.com/fborello-lambda/solar\_panel\_curve\_tracer
+  \raisebox{-0.9\height}{\includegraphics[width=0.07\textwidth]{docs/img/guide_qr.png}}
 
 \newpage
 
@@ -113,15 +120,10 @@ small solar panel, computing the maximum power point (MPP).
 - The load is capped at about 780 mA (20% of full scale).
 - This prototype has no power switch: unplug the battery to turn it off.
 
-## Connecting the panel
+## Connecting the panel and powering on
 
-- Connect the panel's positive lead to **PV+**.
-- Connect the panel's negative lead to **PV-**.
-
-## Powering on
-
-- Connect the battery. The device boots on its own and shows the menu on
-  the OLED screen.
+- Connect the panel's positive lead to **PV+** and negative to **PV-**.
+- Connect the battery: the device boots on its own and shows the OLED menu.
 
 ## Measuring from the OLED
 
@@ -134,7 +136,10 @@ small solar panel, computing the maximum power point (MPP).
 
 1. Connect to Wi-Fi network **ESP32_PLOT** (no password).
 2. Open `http://192.168.4.1` in a browser.
-3. Press **Start Measurement**.
+3. Press **Start** to begin the sweep and **Stop** to end it (ES/EN
+   language switch and light/dark theme included).
+4. Full on-device guide: `http://192.168.4.1/guide`, or OLED
+   **NETWORK > SHOW GUIDE QR**.
 
 ## What happens during a sweep
 
@@ -151,7 +156,8 @@ small solar panel, computing the maximum power point (MPP).
 - Overall curve shape indicates the panel's condition.
 - Lab practice setup: Isc about 50 mA, resolution about 1 mA.
 
-![Example I-V curve](img/iv_example.png){width=34%}
+\begin{center}\includegraphics[width=0.34\textwidth]{docs/img/iv_example.png}\\[-2pt]{\small Example I-V curve}\end{center}
+\vspace{-14pt}
 
 ## Tips
 
@@ -168,6 +174,12 @@ small solar panel, computing the maximum power point (MPP).
 | Sweep stopped early | Hit the 5 W safety limit |
 | Web page is empty | Reconnect to the ESP32_PLOT Wi-Fi network |
 
-## Deep sleep
+## Updating firmware, deep sleep and online guide
 
-The device wakes up with a press of the encoder button.
+- **OTA**: download `app-standard.bin` from the latest GitHub release,
+  connect to **ESP32_PLOT**, open `http://192.168.4.1/ota` (or QR at OLED
+  **SYSTEM > OTA**), upload the file, and wait for the reboot (~30 s).
+- **Deep sleep**: OLED **SYSTEM > DEEP SLEEP**; wakes up with a press of
+  the encoder button.
+- **Online guide** (QR on the right): github.com/fborello-lambda/solar\_panel\_curve\_tracer
+  \raisebox{-0.9\height}{\includegraphics[width=0.07\textwidth]{docs/img/guide_qr.png}}

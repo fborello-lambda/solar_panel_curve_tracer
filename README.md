@@ -1,116 +1,119 @@
 <h1 align="center">Solar Panel I-V Curve Tracer</h1>
 
->[!NOTE]
-> The project was built on top of the template project provided by ESP-IDF. The example is used by command `idf.py create-project`
-that copies the project to user specified path and set it's name. For more information follow the [docs page](https://docs.espressif.com/projects/esp-idf/en/latest/api-guides/build-system.html#start-a-new-project)
+An ESP32-C3 that traces the I-V curve of a small solar panel: it loads the panel with a
+PWM-controlled electronic load (op-amp VCCS + MOSFET), measures voltage and current with an
+INA219 sensor, and auto-ranges a 20-point sweep clustered around the curve's knee. Results are
+served over the device's own Wi-Fi as a web UI (Chart.js), and a SH1106 OLED with a rotary
+encoder gives a local menu.
 
-## How
+<table align="center"><tr>
+<td><img src="imgs/prototype.jpeg" alt="Prototype PCB" width="260"></td>
+<td><img src="imgs/measurement_setup.jpeg" alt="Measurement setup" width="260"></td>
+<td><img src="imgs/web_interface.jpeg" alt="Web interface" width="260"></td>
+</tr></table>
 
-The project was developed with the VSCode IDE using the ESP-IDF extension. The project can be built and flashed to the ESP32-C3 using the ESP-IDF tools. The web server can be accessed by connecting to the ESP32-C3's Wi-Fi network and navigating to the IP address of the ESP32-C3 in a web browser.
+## Quick start
 
-A good starting point is:
+1. Power on the device.
+2. Join the Wi-Fi network `ESP32_PLOT` (no password).
+3. Open `http://192.168.4.1` and press **Start**.
 
-Copy the settings file for VSCode to enable ESP-IDF extension features:
+A printable, two-page A4 quick guide (Spanish + English) is at
+[docs/quick_guide.pdf](docs/quick_guide.pdf); the same content is served on the device itself at
+`http://192.168.4.1/guide`, and reachable from the OLED menu at **NETWORK > SHOW GUIDE QR**.
+
+## Updating the firmware (OTA)
+
+The whole app, including the web UI, is one file. To update:
+
+1. While online, download `app-standard.bin` from the
+   [latest release](https://github.com/fborello-lambda/solar_panel_curve_tracer/releases/latest).
+2. Join the `ESP32_PLOT` Wi-Fi network.
+3. Open `http://192.168.4.1/ota`, or scan the QR at OLED **SYSTEM > OTA**.
+4. Pick the file, upload, and wait about 30 seconds for the reboot, then reconnect.
+
+For a brand-new or blank board, flash `factory-standard.bin` over USB instead:
 
 ```sh
-cp .vscode/settings.json.example .vscode/settings.json
+esptool.py --chip esp32c3 write_flash 0x0 factory-standard.bin
 ```
 
-Then choose the `esp32c3` target by clicking on the target in the bottom bar of VSCode, or by pressing Ctrl+Shift+P and typing `ESP-IDF: Set Espressif device target`.
-The project was developed with ESP-IDF version 5.5.1, so make sure to use the same version or a compatible one. You can set the ESP-IDF version by clicking on the ESP-IDF version in the bottom bar of VSCode, or by pressing Ctrl+Shift+P and typing `ESP-IDF: Select Current ESP-IDF Version`.
-
-By doing this, the ESP-IDF extension will use the correct toolchain and settings for the ESP32-C3.
-
-To connect to the ESP32-C3's Wi-Fi network, the default SSID is `"ESP32_PLOT"` with no password. Then navigate to `http://192.168.4.1` in a web browser and the web interface should load. The `/data` endpoint is used to fetch the data for the chart, it returns a JSON object with the voltage and current data as a list of x,y points.
-
-### Flashing
-
-Because Secure Boot is enabled, the standard ESP-IDF flash button will fail when writing the SPIFFS partition. Use the provided script instead:
-
-```sh
-./secure_boot_flash.sh
-```
-
-This builds the project and flashes all binaries in the correct order, working around the Secure Download Mode limitation on large partition erases.
-
-### OTA Updates
-
-If the device is already running and connected to Wi-Fi, firmware and storage can be updated over the air without a USB connection:
-
-1. Download the latest `app.bin` and `storage.bin` from the GitHub releases (or build them locally).
-2. Navigate to `http://<device-ip>/ota` in a browser.
-3. Under **App firmware**, select `app.bin` and click **Upload and Flash**.
-4. Once the device reboots, go back to `/ota`.
-5. Under **Storage / SPIFFS**, select `storage.bin` and click **Upload Storage**.
-
-The device reboots automatically after each upload.
-
->[!NOTE] I'm experimenting with SECURE_BOOT
-> Right now some boards may have *.pem file applied.
-
-`SECURE_BOOT` is enabled on the test device. The signing key `secure_boot_signing_key.pem` is committed to the repo for convenience since this is a experimental project with no secrets to protect.
-
-> [!WARNING]
-> Committing the signing key is only acceptable here because Secure Boot is used for experimentation, not security. In any real deployment, **never commit the key** — if an attacker obtains it they can sign and flash arbitrary firmware. For production, store it offline in a password manager or encrypted storage.
+> [!IMPORTANT]
+> Everyone uses the **standard** release. `app-secure-boot.bin` is only for the maintainer's
+> single board that has Secure Boot burned into its eFuses; flashing it on another board would
+> make that board accept only images signed with this project's key from then on.
 >
-> Additionally, once Secure Boot is burned into a device's eFuses it cannot be disabled. If the key is ever lost, the device can never be updated again and is permanently bricked. See [LESSONS.md](LESSONS.md) for the full story.
+> The Secure Boot signing key (`secure_boot_signing_key.pem`) is committed to this repo on
+> purpose, since this board is used for experimentation and holds no secrets. Do not do this in
+> a real deployment; see [LESSONS.md](LESSONS.md) for why.
 
 ## How the sweep works
 
-Each trace auto-ranges: the firmware probes open-circuit voltage (Voc), then
-doubles the commanded load current until the panel collapses, which locates
-the knee of the curve without the operator dialling in a current range. The
-20 recorded points are then placed mostly across that knee (a coarse leg
-below it, most of the budget through it, a short tail up to Isc), so a small
-panel (Isc is around 50 mA with the lab practice setup) still gets a well-resolved
-curve shape rather than 20 points all past the cliff. See
-[docs/quick_guide.md](docs/quick_guide.md) for an operator-facing walkthrough
-of using the device, printable as a two-page A4 quick guide (Spanish +
-English) via `docs/build_guide.sh`.
+Each trace auto-ranges: the firmware probes open-circuit voltage (Voc), then doubles the
+commanded load current until the panel collapses, locating the knee of the curve without the
+operator dialling in a current range. The 20 recorded points are then placed mostly across that
+knee, so a small panel (Isc around 50 mA with the lab practice setup) still gets a well-resolved
+curve shape rather than 20 points all past the cliff.
 
-## What
+## Build from source
 
-The Circuit is based on an ESP32-C3 microcontroller, INA219 current sensor, and an op-amp based voltage controlled current source (VCCS) to load the solar panel. The ESP32-C3 reads the voltage and current from the solar panel using the INA219 sensor, and adjusts the load using PWM to control the VCCS. The data is then sent to a web server hosted on the ESP32-C3, where it can be visualized in real-time.
+```sh
+idf.py set-target esp32c3   # first time only
+idf.py build
+idf.py flash monitor
+```
 
-A prototype PCB was mounted on a perfboard, and the firmware was developed using ESP-IDF. The web interface is built using HTML, CSS, and JavaScript, and uses the Chart.js library for data visualization. For more information about the circuit design and implementation, please refer to the [notebook](notebook/README.md).
+Secure-boot variant (maintainer's board only):
 
-### Prototype PCB
+```sh
+idf.py -B build-secure -D SDKCONFIG=build-secure/sdkconfig \
+    -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.secure" build
+./secure_boot_flash.sh
+```
 
-<div align="center">
-    <img src="imgs/prototype.jpeg" alt="Prototype PCB" style="max-width:600px;margin:0 6px;">
-</div>
+Host unit tests (pure sweep math and JSON serialiser, no hardware needed):
 
-### Measurement setup
+```sh
+cd test/host
+idf.py --preview set-target linux
+idf.py build
+./build/host_tests.elf
+```
 
-<div align="center">
-    <img src="imgs/measurement_setup.jpeg" alt="Measurement setup" style="max-width:600px;margin:0 6px;">
-</div>
+See [AGENTS.md](AGENTS.md) for the full repository layout, endpoint list, and developer details.
+A VS Code + ESP-IDF extension setup is available via `cp .vscode/settings.json.example
+.vscode/settings.json`.
 
-### Web interface
+## Hardware
 
-<div align="center">
-    <img src="imgs/web_interface.jpeg" alt="Web interface" style="max-width:600px;margin:0 6px;">
-</div>
+See [AGENTS.md](AGENTS.md#hardware-pinout) for the GPIO pinout and I2C addresses. The solar panel
+used for testing is a Luxen 10 W 12 V LN-10P.
 
-The solar panel used is a Luxen 10W 12V panel. LN-10P
+A prototype PCB was hand-mounted on a perfboard; see [LESSONS.md](LESSONS.md) for hardware
+lessons learnt (missing ground connections, thermal layout, mirrored footprints, and more).
 
 ## References
 
-- Rashid, M.H. (2013) Power Electronics: Devices, Circuits, and Applications. 4th Edition, Pearson Education, Harlow. Chapter 16 - Introduction to Renewable Energy.
-- [Practical Guide to Implementing Solar Panel MPPT Algorithms - 00001521a.pdf](https://ww1.microchip.com/downloads/en/appnotes/00001521a.pdf)
-- [Modeling Photovoltaic Cells - Theory 1/2 - YouTube](https://www.youtube.com/watch?v=uV_z1ptufa4)
-- [Modeling Photovoltaic Cells - LTspice model part 2/2 - YouTube](https://www.youtube.com/watch?v=ox0UtYe4owI)
-- [INA219 Zerø-Drift, Bidirectional Current/Power Monitor With I2C Interface datasheet (Rev. G) - ina219.pdf](https://www.ti.com/lit/ds/symlink/ina219.pdf)
-- [Using An Op Amp for High-Side Current Sensing (Rev. A) - sboa347a.pdf](https://www.ti.com/lit/ab/sboa347a/sboa347a.pdf?ts=1755743557072)
-- [operational amplifier - High voltage adjustable constant current source controlled by MCU - Electrical Engineering Stack Exchange](https://electronics.stackexchange.com/questions/591912/high-voltage-adjustable-constant-current-source-controlled-by-mcu)
-- [An\_Easy\_Solution\_to\_Current\_Limiting\_an\_Op\_Amp - sbva011.pdf](https://www.ti.com/lit/an/sbva011/sbva011.pdf?ts=1755718060450&ref_url=https%253A%252F%252Fwww.bing.com%252F)
-- [Implementation\_and\_Applications\_of\_Current\_Sources\_and\_Current\_Receivers\ - sboa046.pdf](https://www.ti.com/lit/an/sboa046/sboa046.pdf?ts=1755759450978&ref_url=https%253A%252F%252Fwww.google.com%252F)
-- [operational amplifier - MOSFET - OPAMP circuit - Electrical Engineering Stack Exchange](https://electronics.stackexchange.com/questions/57448/mosfet-opamp-circuit)
-- [voltage - Driving an IRLZ44N Logic MOSFET with a 2N2222 NPN Transistor from an ESP32 - Electrical Engineering Stack Exchange](https://electronics.stackexchange.com/questions/751783/driving-an-irlz44n-logic-mosfet-with-a-2n2222-npn-transistor-from-an-esp32)
-- [microcontroller - Micro-controller controlled current source - Electrical Engineering Stack Exchange](https://electronics.stackexchange.com/questions/56772/micro-controller-controlled-current-source)
-- [Unstable Feedback in Opamp+MOSFET circuit for Voltage Controlled Current Source - Electrical Engineering Stack Exchange](https://electronics.stackexchange.com/questions/180175/unstable-feedback-in-opampmosfet-circuit-for-voltage-controlled-current-source)
-- [Power MOSFET gate driver fundamentals - AN90059.pdf](https://assets.nexperia.com/documents/application-note/AN90059.pdf)
-- [PWM DAC (Rev. A) - slaaec5a.pdf](https://www.ti.com/lit/sd/slaaec5a/slaaec5a.pdf?ts=1756837124081)
-- [Using PWM Output as a Digital-to-Analog Converter on a TMS320F280x (Rev. A) - spraa88a.pdf](https://www.ti.com/lit/an/spraa88a/spraa88a.pdf?ts=1756204084617)
-- [Using PWM Timer\_B as a DAC (Rev. A) - slaa116a.pdf](https://www.ti.com/lit/an/slaa116a/slaa116a.pdf?ts=1756222437207&ref_url=https%253A%252F%252Fwww.google.com%252F)
-- [Dual-Output 8-Bit PWM DAC Using Low-Memory MSP430™ MCUs - slaa804.pdf](https://www.ti.com/lit/ab/slaa804/slaa804.pdf?ts=1756207779110&ref_url=https%253A%252F%252Fwww.ti.com%252Ftool%252FMSP-EXP430FR2311)
+<details>
+<summary>Papers, datasheets, and background reading</summary>
+
+- Rashid, M.H. (2013) Power Electronics: Devices, Circuits, and Applications. 4th Edition, Pearson Education, Harlow. Chapter 16, Introduction to Renewable Energy.
+- [Practical Guide to Implementing Solar Panel MPPT Algorithms](https://ww1.microchip.com/downloads/en/appnotes/00001521a.pdf)
+- [Modeling Photovoltaic Cells, Theory 1/2 (YouTube)](https://www.youtube.com/watch?v=uV_z1ptufa4)
+- [Modeling Photovoltaic Cells, LTspice model 2/2 (YouTube)](https://www.youtube.com/watch?v=ox0UtYe4owI)
+- [INA219 datasheet (Rev. G)](https://www.ti.com/lit/ds/symlink/ina219.pdf)
+- [Using An Op Amp for High-Side Current Sensing (Rev. A)](https://www.ti.com/lit/ab/sboa347a/sboa347a.pdf)
+- [High voltage adjustable constant current source controlled by MCU (EE Stack Exchange)](https://electronics.stackexchange.com/questions/591912/high-voltage-adjustable-constant-current-source-controlled-by-mcu)
+- [An Easy Solution to Current Limiting an Op Amp](https://www.ti.com/lit/an/sbva011/sbva011.pdf)
+- [Implementation and Applications of Current Sources and Current Receivers](https://www.ti.com/lit/an/sboa046/sboa046.pdf)
+- [MOSFET, OPAMP circuit (EE Stack Exchange)](https://electronics.stackexchange.com/questions/57448/mosfet-opamp-circuit)
+- [Driving an IRLZ44N Logic MOSFET with a 2N2222 NPN Transistor from an ESP32 (EE Stack Exchange)](https://electronics.stackexchange.com/questions/751783/driving-an-irlz44n-logic-mosfet-with-a-2n2222-npn-transistor-from-an-esp32)
+- [Micro-controller controlled current source (EE Stack Exchange)](https://electronics.stackexchange.com/questions/56772/micro-controller-controlled-current-source)
+- [Unstable Feedback in Opamp+MOSFET circuit for Voltage Controlled Current Source (EE Stack Exchange)](https://electronics.stackexchange.com/questions/180175/unstable-feedback-in-opampmosfet-circuit-for-voltage-controlled-current-source)
+- [Power MOSFET gate driver fundamentals](https://assets.nexperia.com/documents/application-note/AN90059.pdf)
+- [PWM DAC (Rev. A)](https://www.ti.com/lit/sd/slaaec5a/slaaec5a.pdf)
+- [Using PWM Output as a Digital-to-Analog Converter on a TMS320F280x (Rev. A)](https://www.ti.com/lit/an/spraa88a/spraa88a.pdf)
+- [Using PWM Timer_B as a DAC (Rev. A)](https://www.ti.com/lit/an/slaa116a/slaa116a.pdf)
+- [Dual-Output 8-Bit PWM DAC Using Low-Memory MSP430 MCUs](https://www.ti.com/lit/ab/slaa804/slaa804.pdf)
+
+</details>

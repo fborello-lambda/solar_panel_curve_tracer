@@ -1,4 +1,4 @@
-# LESSONS.md — Hardware lessons learnt
+# LESSONS.md: Hardware lessons learnt
 
 ## No battery disconnect switch
 
@@ -38,7 +38,7 @@ Secure Boot on ESP32 burns the public key digest into eFuses permanently. Once e
 **When it is worth using:** only if the firmware contains secrets or logic that must not be tampered with (proprietary algorithms, credential storage, safety-critical control). For a development board or open-source project it adds risk with little benefit.
 
 **If you do use it:**
-- Back up `secure_boot_signing_key.pem` immediately after generation — store it in a password manager or encrypted offline location, never only on the project machine.
+- Back up `secure_boot_signing_key.pem` immediately after generation: store it in a password manager or encrypted offline location, never only on the project machine.
 - Add `*.pem` to `.gitignore` to avoid accidental commits, but keep the backup elsewhere.
-- Be aware that `esptool` in Secure Download Mode cannot read flash or eFuses, and large partition erases (>~1 MB at one address range) may fail — flash the SPIFFS partition separately with `--flash_size 4MB` instead of `keep`.
-- Use the `/ota/spiffs` HTTP endpoint to update the SPIFFS image over the network and avoid the serial flashing issue entirely.
+- Be aware that `esptool` in Secure Download Mode cannot read flash or eFuses, and a large partition erase (over roughly 1 MB at one address range) may fail; `secure_boot_flash.sh` derives its flash offsets from the build's own `flash_args` instead of hardcoding them, so it stays correct if the partition table changes.
+- The web UI is embedded in the app image now (no SPIFFS, no storage partition to flash separately), so OTA updates are a single app image over `/ota` and this workaround no longer applies to it.
