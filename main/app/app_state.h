@@ -55,8 +55,7 @@ typedef struct
     bool ina_ready;
     volatile bool measurement_stop_requested;
     char wifi_qr_payload[128];
-    uint8_t qr_frame[SH1106_FB_SIZE];
-    bool qr_frame_valid;
+    uint8_t frame_buf[SH1106_FB_SIZE]; // OLED framebuffer, shared by all screens (not just QR)
     ui_screen_t ui_screen;
     ui_qr_kind_t ui_qr_kind;
     int ui_home_index;
