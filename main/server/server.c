@@ -40,6 +40,7 @@ static esp_err_t send_file(httpd_req_t *req, const char *path, const char *type)
 static esp_err_t root_get_handler(httpd_req_t *req) { return send_file(req, "/spiffs/index.html", "text/html; charset=utf-8"); }
 static esp_err_t chart_get_handler(httpd_req_t *req) { return send_file(req, "/spiffs/chart.umd.min.js", "application/javascript"); }
 static esp_err_t script_get_handler(httpd_req_t *req) { return send_file(req, "/spiffs/script.js", "application/javascript"); }
+static esp_err_t guide_get_handler(httpd_req_t *req) { return send_file(req, "/spiffs/guide.pdf", "application/pdf"); }
 static esp_err_t data_get_handler(httpd_req_t *req)
 {
     // Ensure data responses are not cached by clients/proxies
@@ -391,6 +392,7 @@ esp_err_t server_init(void)
     httpd_uri_t root = {.uri = "/", .method = HTTP_GET, .handler = root_get_handler};
     httpd_uri_t chart = {.uri = "/chart.js", .method = HTTP_GET, .handler = chart_get_handler};
     httpd_uri_t script = {.uri = "/script.js", .method = HTTP_GET, .handler = script_get_handler};
+    httpd_uri_t guide = {.uri = "/guide", .method = HTTP_GET, .handler = guide_get_handler};
     httpd_uri_t data = {.uri = "/data", .method = HTTP_GET, .handler = data_get_handler};
     httpd_uri_t start_meas = {.uri = "/start-measurement", .method = HTTP_POST, .handler = start_measurement_handler};
     httpd_uri_t ota_get = {.uri = "/ota", .method = HTTP_GET, .handler = ota_get_handler};
@@ -402,6 +404,7 @@ esp_err_t server_init(void)
     httpd_register_uri_handler(server, &root);
     httpd_register_uri_handler(server, &chart);
     httpd_register_uri_handler(server, &script);
+    httpd_register_uri_handler(server, &guide);
     httpd_register_uri_handler(server, &data);
     httpd_register_uri_handler(server, &start_meas);
     httpd_register_uri_handler(server, &ota_get);

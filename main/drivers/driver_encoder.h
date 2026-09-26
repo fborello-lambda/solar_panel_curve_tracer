@@ -42,7 +42,6 @@ typedef struct
 
 esp_err_t encoder_init(const encoder_config_t *cfg);
 bool encoder_get_event(encoder_event_t *out_event, TickType_t wait_ticks);
-int32_t encoder_get_position(void);
 
 #ifdef __cplusplus
 }

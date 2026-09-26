@@ -77,10 +77,9 @@ static void display_task(void *arg)
             continue;
         }
 
-        ui_render_display_frame(g_app.qr_frame);
-        g_app.qr_frame_valid = true;
+        ui_render_display_frame(g_app.frame_buf);
 
-        esp_err_t ret = sh1106_flush(&g_app.display, g_app.qr_frame, sizeof(g_app.qr_frame));
+        esp_err_t ret = sh1106_flush(&g_app.display, g_app.frame_buf, sizeof(g_app.frame_buf));
         if (ret != ESP_OK)
         {
             ESP_LOGW(TAG, "display_task: flush failed: %s", esp_err_to_name(ret));

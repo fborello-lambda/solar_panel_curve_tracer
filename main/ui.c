@@ -61,70 +61,37 @@ static const char *ui_home_title(int index)
     return titles[i];
 }
 
+#define UI_MENU_MAX_ITEMS 4
+
+static const char *const s_menu_items[HOME_SECTION_COUNT][UI_MENU_MAX_ITEMS] = {
+    [HOME_SECTION_NETWORK] = {"SHOW WIFI QR", "SHOW AP IP QR", "SHOW GUIDE QR", "BACK"},
+    [HOME_SECTION_MEASURE] = {"CURVE TRACER", "DYNAMIC LOAD", "BACK", NULL},
+    [HOME_SECTION_SYSTEM] = {"OTA", "RESET", "DEEP SLEEP", "BACK"},
+};
+
 static const char *ui_menu_item_label(int home_index, int menu_index)
 {
-    if (home_index == HOME_SECTION_NETWORK)
+    if (home_index < 0 || home_index >= HOME_SECTION_COUNT ||
+        menu_index < 0 || menu_index >= UI_MENU_MAX_ITEMS ||
+        s_menu_items[home_index][menu_index] == NULL)
     {
-        if (menu_index == 0)
-        {
-            return "SHOW WIFI QR";
-        }
-        if (menu_index == 1)
-        {
-            return "SHOW AP IP QR";
-        }
         return "BACK";
     }
-
-    if (home_index == HOME_SECTION_SYSTEM)
-    {
-        if (menu_index == 0)
-        {
-            return "OTA";
-        }
-        if (menu_index == 1)
-        {
-            return "RESET";
-        }
-        if (menu_index == 2)
-        {
-            return "DEEP SLEEP";
-        }
-        return "BACK";
-    }
-
-
-    if (home_index == HOME_SECTION_MEASURE)
-    {
-        if (menu_index == 0)
-        {
-            return "CURVE TRACER";
-        }
-        if (menu_index == 1)
-        {
-            return "DYNAMIC LOAD";
-        }
-        return "BACK";
-    }
-
-    return "BACK";
+    return s_menu_items[home_index][menu_index];
 }
 
 static int ui_menu_item_count(int home_index)
 {
-    if (home_index == HOME_SECTION_NETWORK)
+    if (home_index < 0 || home_index >= HOME_SECTION_COUNT)
     {
-        return 3;
+        return 0;
     }
-    if (home_index == HOME_SECTION_MEASURE)
+    int count = 0;
+    while (count < UI_MENU_MAX_ITEMS && s_menu_items[home_index][count] != NULL)
     {
-        return 3;
+        count++;
     }
-    if (home_index == HOME_SECTION_SYSTEM)
-    {
-        return 4;
-    }
-    return 2;
+    return count;
 }
 
 static void enter_deep_sleep_mode(void)
@@ -239,7 +206,18 @@ void ui_on_button(void)
 
         if (g_app.ui_home_index == HOME_SECTION_NETWORK)
         {
-            g_app.ui_qr_kind = (g_app.ui_menu_index == 0) ? UI_QR_WIFI : UI_QR_AP_IP;
+            if (g_app.ui_menu_index == 0)
+            {
+                g_app.ui_qr_kind = UI_QR_WIFI;
+            }
+            else if (g_app.ui_menu_index == 1)
+            {
+                g_app.ui_qr_kind = UI_QR_AP_IP;
+            }
+            else
+            {
+                g_app.ui_qr_kind = UI_QR_GUIDE;
+            }
             ui_set_screen(UI_SCREEN_ACTION_QR);
             return;
         }
@@ -273,8 +251,14 @@ void ui_on_button(void)
         if (g_app.ui_home_index == HOME_SECTION_MEASURE && g_app.ui_menu_index == 1)
         {
             measurement_request(false);
-            dynamic_load_enter();
-            ui_set_screen(UI_SCREEN_ACTION_DYNAMIC_LOAD);
+            if (dynamic_load_enter())
+            {
+                ui_set_screen(UI_SCREEN_ACTION_DYNAMIC_LOAD);
+            }
+            else
+            {
+                ESP_LOGW(TAG, "UI: dynamic load entry refused, staying on menu");
+            }
             return;
         }
 
@@ -428,7 +412,7 @@ static void draw_real_qr_to_fb(uint8_t *fb, const char *payload)
     if (esp_qrcode_generate(&cfg, payload) != ESP_OK)
     {
         sh1106_fb_draw_text(fb, 0, 0, "QR GEN ERROR");
-        sh1106_fb_draw_text(fb, 0, 12, "AP SSID ERROR");
+        sh1106_fb_draw_text(fb, 0, 12, "QR ERROR");
     }
 }
 
@@ -514,6 +498,8 @@ void ui_render_display_frame(uint8_t *fb)
             payload = "http://192.168.4.1";
         else if (g_app.ui_qr_kind == UI_QR_OTA)
             payload = "http://192.168.4.1/ota";
+        else if (g_app.ui_qr_kind == UI_QR_GUIDE)
+            payload = "http://192.168.4.1/guide";
         else
             payload = g_app.wifi_qr_payload;
         draw_real_qr_to_fb(fb, payload);

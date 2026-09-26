@@ -72,40 +72,6 @@ extern "C"
     } ina219_cal_t;
 
     /**
-     * @brief Initialize an INA219 device and its I2C master resources.
-     *
-     * This function configures and installs the I2C driver for the given port and
-     * pins (if bus_handle and dev_handle are provided they may be used/filled by
-     * the implementation). It prepares the device handle for subsequent INA219
-     * operations.
-     *
-     * @param bus_handle Pointer to an i2c_master_bus_handle_t that may be used or
-     *                   filled by the implementation (may be NULL if not used).
-     * @param dev_handle Pointer to an i2c_master_dev_handle_t that will be filled
-     *                   with the INA219 device handle on success.
-     * @param port I2C port number to use for the INA219.
-     * @param sda_pin GPIO number used for SDA.
-     * @param scl_pin GPIO number used for SCL.
-     * @param clk_speed_hz I2C clock speed in Hz.
-     * @param i2c_addr 7-bit I2C address of the INA219 device.
-     *
-     * @return int 0 (ESP_OK) on success, or a non-zero esp_err_t error code on failure.
-     *
-     * Example usage:
-     * ```c
-     *  i2c_master_bus_handle_t bus_handle;
-     *  i2c_master_dev_handle_t dev_handle;
-     *  esp_err_t res = ina219_init(&bus_handle, &dev_handle, I2C_NUM_0, 8, 9, 100000, INA219_ADDRESS_DEFAULT);
-     *  ina219_cal_t cal;
-     *  ina219_calibrate_for_32V_10A(dev_handle, &cal);
-     *
-     *  int32_t shunt_uV = 0;
-     *  ina219_get_shunt_voltage_uv(dev_handle, &shunt_uV);
-     * ```
-     */
-    int ina219_init(i2c_master_bus_handle_t *bus_handle, i2c_master_dev_handle_t *dev_handle, i2c_port_num_t port, int sda_pin, int scl_pin, uint32_t clk_speed_hz, uint8_t i2c_addr);
-
-    /**
      * @brief Attach INA219 device to an existing I2C master bus.
      *
      * Use this when the application owns a shared bus and multiple devices
@@ -119,18 +85,6 @@ extern "C"
      * @return int 0 (ESP_OK) on success, or esp_err_t on failure.
      */
     int ina219_init_on_bus(i2c_master_bus_handle_t bus_handle, i2c_master_dev_handle_t *dev_handle, uint32_t clk_speed_hz, uint8_t i2c_addr);
-
-    /**
-     * @brief Reset the INA219 device to its default register values.
-     *
-     * This issues the appropriate write to the device reset field so the INA219
-     * returns to its power-up defaults.
-     *
-     * @param dev_handle The I2C device handle for the INA219.
-     *
-     * @return int 0 (ESP_OK) on success, or a non-zero esp_err_t error code on failure.
-     */
-    int ina219_reset(i2c_master_dev_handle_t dev_handle);
 
     /**
      * @brief Read a 16-bit register from the INA219.
@@ -247,21 +201,6 @@ extern "C"
      * @return int 0 (ESP_OK) on success, or a non-zero esp_err_t error code on failure.
      */
     int ina219_get_current_ma(i2c_master_dev_handle_t dev_handle, const ina219_cal_t *cal, int32_t *mA);
-
-    /**
-     * @brief Read the power register and convert to milliwatts using calibration.
-     *
-     * Requires a prior successful call to one of the ina219_calibrate_* functions to
-     * populate @p cal. The conversion is:
-     *   power_mW = raw_power * cal->power_multiplier_mW
-     *
-     * @param dev_handle The I2C device handle for the INA219.
-     * @param cal Pointer to a populated ina219_cal_t structure from calibration. Must not be NULL.
-     * @param mW Pointer to int32_t that will receive the power in milliwatts.
-     *
-     * @return int 0 (ESP_OK) on success, or a non-zero esp_err_t error code on failure.
-     */
-    int ina219_get_power_mw(i2c_master_dev_handle_t dev_handle, const ina219_cal_t *cal, int32_t *mW);
 #ifdef __cplusplus
 }
 #endif

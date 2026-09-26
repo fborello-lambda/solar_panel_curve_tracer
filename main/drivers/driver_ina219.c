@@ -4,21 +4,6 @@ static const char *TAG = "ina219_driver";
 
 #define TIMEOUT 1000
 
-int ina219_init(i2c_master_bus_handle_t *bus_handle, i2c_master_dev_handle_t *dev_handle, i2c_port_num_t port, int sda_pin, int scl_pin, uint32_t clk_speed_hz, uint8_t i2c_addr)
-{
-    i2c_master_bus_config_t bus_config = {
-        .i2c_port = port,
-        .sda_io_num = sda_pin,
-        .scl_io_num = scl_pin,
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = true,
-    };
-    ESP_ERROR_CHECK(i2c_new_master_bus(&bus_config, bus_handle));
-
-    return ina219_init_on_bus(*bus_handle, dev_handle, clk_speed_hz, i2c_addr);
-}
-
 int ina219_init_on_bus(i2c_master_bus_handle_t bus_handle, i2c_master_dev_handle_t *dev_handle, uint32_t clk_speed_hz, uint8_t i2c_addr)
 {
     if (bus_handle == NULL || dev_handle == NULL)
@@ -31,16 +16,7 @@ int ina219_init_on_bus(i2c_master_bus_handle_t bus_handle, i2c_master_dev_handle
         .device_address = i2c_addr,
         .scl_speed_hz = clk_speed_hz,
     };
-    ESP_ERROR_CHECK(i2c_master_bus_add_device(bus_handle, &dev_config, dev_handle));
-
-    return ESP_OK;
-}
-
-int ina219_reset(i2c_master_dev_handle_t dev_handle)
-{
-    // Write to the configuration register to reset the device
-    // The reset bit is bit 15 of the configuration register
-    return ina219_write_register(dev_handle, INA219_REG_CONFIG, 1 << 15);
+    return i2c_master_bus_add_device(bus_handle, &dev_config, dev_handle);
 }
 
 /* Write arbitrary bytes to the device */
@@ -72,7 +48,9 @@ int ina219_read_register(i2c_master_dev_handle_t dev_handle, uint8_t reg, uint16
     int ret = ina219_read_bytes(dev_handle, reg, data, sizeof(data));
     if (ret != ESP_OK)
     {
-        ESP_LOGE(TAG, "Failed to read register 0x%02X: %s", reg, esp_err_to_name(ret));
+        // Debug-only: the 100 ms sampling loop calls this often enough that
+        // logging every transient I2C failure at error level floods the log.
+        ESP_LOGD(TAG, "Failed to read register 0x%02X: %s", reg, esp_err_to_name(ret));
         return ret;
     }
     *value = (data[0] << 8) | data[1];
@@ -99,11 +77,6 @@ int ina219_calibrate_for_32V_10A(i2c_master_dev_handle_t dev_handle, ina219_cal_
         return ESP_ERR_INVALID_ARG;
 
     const double Rshunt = 0.010; /* 10 mOhm */
-    // const double max_expected_current = 10.0; /* 10 A */
-
-    // const double current_lsb_1 = max_expected_current / (1 << 15); // (2^15)
-    // const double current_lsb_2 = max_expected_current / (1 << 12); // (2^12)
-    // const double current_lsb = (current_lsb_2 - current_lsb_1) / 2.0;
     const double current_lsb = 0.0005; /* 500 uA per bit */
 
     // Calibration value
@@ -116,13 +89,10 @@ int ina219_calibrate_for_32V_10A(i2c_master_dev_handle_t dev_handle, ina219_cal_
     cal->cal_value = cal_value;
     cal->current_lsb = current_lsb;
     /* current_divider_mA: mA = raw_current / current_divider_mA
-       current_divider_mA = 1 / (current_lsb * 1000) = 1 / (0.0001 * 1000) = 10 */
-    double tmp = 1.0 / (current_lsb * 1000.0);
-    double plus = tmp + 0.5;
-    ESP_LOGI(TAG, "current_divider=%f || plus=%f", tmp, plus);
+       current_divider_mA = 1 / (current_lsb * 1000) = 1 / (0.0005 * 1000) = 2 */
     cal->current_divider_mA = (int)(1.0 / (current_lsb * 1000.0) + 0.5);
     /* power_multiplier_mW: mW = raw_power * power_multiplier_mW
-       power_lsb in mW = power_lsb * 1000 = 2 -> multiplier = 2 */
+       power_lsb in mW = power_lsb * 1000 = 10 -> multiplier = 10 */
     cal->power_multiplier_mW = (int)(power_lsb * 1000.0 + 0.5);
     cal->shunt_resistor_mOhm = 10; /* 10 mOhm */
 
@@ -161,19 +131,15 @@ int ina219_calibrate_for_32V_2A(i2c_master_dev_handle_t dev_handle, ina219_cal_t
 
     /* Adafruit defaults for 32V, 2A, Rshunt = 0.1 ohm */
     const double Rshunt = 0.100; /* 100 mOhm -> 0.1 ohm */
-    // const double max_expected_current = 2.0; /* 2 A */
 
-    /* 1) Determine minimum current LSB */
-    // const double min_current_lsb = max_expected_current / 32767.0;
-
-    /* 2) Choose a nice round Current_LSB (Adafruit uses 100uA = 0.0001 A/bit) */
+    /* Choose a nice round Current_LSB (Adafruit uses 100uA = 0.0001 A/bit) */
     const double current_lsb = 0.0001; /* 100 uA per bit */
 
-    /* 3) Compute calibration register */
+    /* Compute calibration register */
     double cal_double = 0.04096 / (current_lsb * Rshunt);
     uint16_t cal_value = (uint16_t)(cal_double + 0.5); /* round */
 
-    /* 4) Power LSB (W/bit) */
+    /* Power LSB (W/bit) */
     const double power_lsb = 20.0 * current_lsb; /* 0.002 W/bit */
 
     /* Fill cal struct (convenience integer multipliers) */
@@ -258,20 +224,5 @@ int ina219_get_current_ma(i2c_master_dev_handle_t dev_handle, const ina219_cal_t
     int16_t s = (int16_t)raw;
     /* mA = raw / divider */
     *mA = (int32_t)s / cal->current_divider_mA;
-    return ESP_OK;
-}
-
-/* Read power (milliwatts) using calibration */
-int ina219_get_power_mw(i2c_master_dev_handle_t dev_handle, const ina219_cal_t *cal, int32_t *mW)
-{
-    if (cal == NULL || mW == NULL)
-        return ESP_ERR_INVALID_ARG;
-
-    uint16_t raw;
-    int ret = ina219_read_register(dev_handle, INA219_REG_POWER, &raw);
-    if (ret != ESP_OK)
-        return ret;
-    /* mW = raw * power_multiplier_mW */
-    *mW = (int32_t)raw * cal->power_multiplier_mW;
     return ESP_OK;
 }

@@ -107,11 +107,19 @@ esp_err_t sh1106_init_on_bus(sh1106_t *display, i2c_master_bus_handle_t bus, uin
         ret = sh1106_write_cmd(display, init_cmds[i]);
         if (ret != ESP_OK)
         {
+            i2c_master_bus_rm_device(display->dev);
+            display->dev = NULL;
             return ret;
         }
     }
 
-    return sh1106_clear(display);
+    ret = sh1106_clear(display);
+    if (ret != ESP_OK)
+    {
+        i2c_master_bus_rm_device(display->dev);
+        display->dev = NULL;
+    }
+    return ret;
 }
 
 esp_err_t sh1106_set_rotation(const sh1106_t *display, bool rotate_180)

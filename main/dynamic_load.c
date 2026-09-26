@@ -5,6 +5,7 @@
 #include <esp_log.h>
 
 #include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <freertos/task.h>
 
 #include "app/app_hw.h"
@@ -16,6 +17,11 @@
 
 static const char *TAG = "DYNLOAD";
 
+// Short timeout: this is called from the encoder and display tasks, and must
+// never block either of them for long. It must never be held while calling
+// measurement_request(), which takes the same g_app.state_mtx.
+#define DYNLOAD_LOCK_TIMEOUT_MS 20
+
 static void dynamic_load_set_duty(uint32_t duty_steps);
 
 void dynamic_load_adjust(int dir)
@@ -26,6 +32,12 @@ void dynamic_load_adjust(int dir)
     if (g_app.measurement_running)
         return;
 
+    if (g_app.state_mtx == NULL || xSemaphoreTake(g_app.state_mtx, pdMS_TO_TICKS(DYNLOAD_LOCK_TIMEOUT_MS)) != pdTRUE)
+    {
+        ESP_LOGW(TAG, "dynamic_load_adjust: failed to take state mutex, skipping");
+        return;
+    }
+
     if (dir > 0 && g_app.dynamic_measured_valid)
     {
         float near_limit_mW = LOAD_POWER_LIMIT_MW - LOAD_POWER_NEAR_MARGIN_MW;
@@ -33,6 +45,7 @@ void dynamic_load_adjust(int dir)
         {
             g_app.dynamic_power_limited = true;
             ESP_LOGW(TAG, "dynamic_load: power near limit (%.0f mW), blocking duty increase", g_app.dynamic_power_mW);
+            xSemaphoreGive(g_app.state_mtx);
             return;
         }
     }
@@ -46,6 +59,7 @@ void dynamic_load_adjust(int dir)
         new_duty = 0;
 
     dynamic_load_set_duty((uint32_t)new_duty);
+    xSemaphoreGive(g_app.state_mtx);
 }
 
 void dynamic_load_update_measured(void)
@@ -106,14 +120,22 @@ void dynamic_load_update_measured(void)
             g_app.dynamic_power_limited = true;
             if (g_app.dynamic_duty_steps > 0)
             {
-                uint32_t reduced_duty = (g_app.dynamic_duty_steps > DYNAMIC_LOAD_DUTY_STEP)
-                                            ? (g_app.dynamic_duty_steps - DYNAMIC_LOAD_DUTY_STEP)
-                                            : 0;
-                ESP_LOGW(TAG, "dynamic_load: power limit reached (%.0f mW), backing off duty %lu -> %lu",
-                         g_app.dynamic_power_mW,
-                         (unsigned long)g_app.dynamic_duty_steps,
-                         (unsigned long)reduced_duty);
-                dynamic_load_set_duty(reduced_duty);
+                if (g_app.state_mtx != NULL && xSemaphoreTake(g_app.state_mtx, pdMS_TO_TICKS(DYNLOAD_LOCK_TIMEOUT_MS)) == pdTRUE)
+                {
+                    uint32_t reduced_duty = (g_app.dynamic_duty_steps > DYNAMIC_LOAD_DUTY_STEP)
+                                                ? (g_app.dynamic_duty_steps - DYNAMIC_LOAD_DUTY_STEP)
+                                                : 0;
+                    ESP_LOGW(TAG, "dynamic_load: power limit reached (%.0f mW), backing off duty %lu -> %lu",
+                             g_app.dynamic_power_mW,
+                             (unsigned long)g_app.dynamic_duty_steps,
+                             (unsigned long)reduced_duty);
+                    dynamic_load_set_duty(reduced_duty);
+                    xSemaphoreGive(g_app.state_mtx);
+                }
+                else
+                {
+                    ESP_LOGW(TAG, "dynamic_load: failed to take state mutex, skipping power-limit backoff");
+                }
             }
         }
         else if (g_app.dynamic_power_mW < (LOAD_POWER_LIMIT_MW - LOAD_POWER_NEAR_MARGIN_MW))
@@ -128,10 +150,25 @@ void dynamic_load_update_measured(void)
     }
 }
 
-void dynamic_load_enter(void)
+bool dynamic_load_enter(void)
 {
     if (g_app.measurement_running)
-        return;
+        return false;
+
+    if (g_app.state_mtx == NULL || xSemaphoreTake(g_app.state_mtx, pdMS_TO_TICKS(DYNLOAD_LOCK_TIMEOUT_MS)) != pdTRUE)
+    {
+        ESP_LOGW(TAG, "dynamic_load_enter: failed to take state mutex, refusing");
+        return false;
+    }
+
+    // Re-check under the lock: measurement_start_locked reads
+    // dynamic_load_active under this same mutex, so this is the single
+    // point of truth for both sides of that race.
+    if (g_app.measurement_running)
+    {
+        xSemaphoreGive(g_app.state_mtx);
+        return false;
+    }
 
     g_app.dynamic_load_active = true;
     g_app.dynamic_power_limited = false;
@@ -140,20 +177,42 @@ void dynamic_load_enter(void)
     g_app.dynamic_last_sample_tick = 0;
 
     dynamic_load_set_duty(0);
+    xSemaphoreGive(g_app.state_mtx);
+
+    // Sampling over I2C, done outside the lock so it never blocks
+    // measurement_start_locked.
     dynamic_load_update_measured();
     app_display_mark_dirty();
+    return true;
 }
 
 void dynamic_load_exit(void)
 {
-    g_app.dynamic_load_active = false;
-    g_app.dynamic_measured_valid = false;
-    g_app.dynamic_measured_mA = 0.0f;
-    g_app.dynamic_power_mW = 0.0f;
-    g_app.dynamic_bus_mv = 0;
-    g_app.dynamic_shunt_uv = 0;
-    g_app.dynamic_power_limited = false;
-    g_app.dynamic_duty_steps = 0;
+    if (g_app.state_mtx != NULL && xSemaphoreTake(g_app.state_mtx, pdMS_TO_TICKS(DYNLOAD_LOCK_TIMEOUT_MS)) == pdTRUE)
+    {
+        g_app.dynamic_load_active = false;
+        g_app.dynamic_measured_valid = false;
+        g_app.dynamic_measured_mA = 0.0f;
+        g_app.dynamic_power_mW = 0.0f;
+        g_app.dynamic_bus_mv = 0;
+        g_app.dynamic_shunt_uv = 0;
+        g_app.dynamic_power_limited = false;
+        g_app.dynamic_duty_steps = 0;
+        xSemaphoreGive(g_app.state_mtx);
+    }
+    else
+    {
+        ESP_LOGW(TAG, "dynamic_load_exit: failed to take state mutex, clearing state unlocked");
+        g_app.dynamic_load_active = false;
+        g_app.dynamic_measured_valid = false;
+        g_app.dynamic_measured_mA = 0.0f;
+        g_app.dynamic_power_mW = 0.0f;
+        g_app.dynamic_bus_mv = 0;
+        g_app.dynamic_shunt_uv = 0;
+        g_app.dynamic_power_limited = false;
+        g_app.dynamic_duty_steps = 0;
+    }
+
     if (g_app.pwm_ready)
     {
         pwm_controller_set_duty(0);
