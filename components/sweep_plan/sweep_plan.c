@@ -62,7 +62,11 @@ bool sweep_range_on_probe(sweep_range_t *r, float v_mV, float i_mA)
 {
     if (v_mV <= r->collapse_mV)
     {
-        float isc_mA = i_mA;
+        // The collapsed reading is normally Isc, but a source that folds
+        // back or cuts out (a bench supply in OCP, a flickering lamp) can
+        // read far lower. Isc is never below the last regulating current,
+        // so trust whichever is larger instead of shrinking the sweep.
+        float isc_mA = (i_mA > r->lo_i_mA) ? i_mA : r->lo_i_mA;
         uint32_t knee;
         if (r->lo == 0 || r->lo_i_mA <= 0.5f)
         {
@@ -73,6 +77,8 @@ bool sweep_range_on_probe(sweep_range_t *r, float v_mV, float i_mA)
         else
         {
             knee = (uint32_t)((isc_mA * (float)r->lo) / r->lo_i_mA);
+            if (knee < r->lo)
+                knee = r->lo;
             if (knee > r->hard_max)
                 knee = r->hard_max;
         }

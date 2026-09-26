@@ -18,6 +18,7 @@ void test_sweep_range_knee_times_headroom_clamped_to_hard_max(void);
 void test_sweep_range_low_voc_is_no_panel(void);
 void test_sweep_range_strong_panel_hits_hard_max(void);
 void test_sweep_range_collapse_on_first_probe_is_sane(void);
+void test_sweep_range_low_collapse_reading_keeps_last_regulating_current(void);
 
 // json_builder
 void test_json_builder_zero_points(void);
@@ -50,6 +51,7 @@ void app_main(void)
     RUN_TEST(test_sweep_range_low_voc_is_no_panel);
     RUN_TEST(test_sweep_range_strong_panel_hits_hard_max);
     RUN_TEST(test_sweep_range_collapse_on_first_probe_is_sane);
+    RUN_TEST(test_sweep_range_low_collapse_reading_keeps_last_regulating_current);
 
     RUN_TEST(test_json_builder_zero_points);
     RUN_TEST(test_json_builder_one_point);

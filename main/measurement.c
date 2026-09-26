@@ -383,6 +383,17 @@ static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, 
     if (r != MEASURE_OK)
         return false;
 
+    // Only a small reading can be sensor offset. Anything larger is real
+    // current flowing with no load commanded (e.g. the op-amp reference
+    // not reaching 0 V), and subtracting it would hide the problem and
+    // skew every point.
+    if (offset_i_mA > SWEEP_MAX_ZERO_OFFSET_MA || offset_i_mA < -SWEEP_MAX_ZERO_OFFSET_MA)
+    {
+        ESP_LOGW(TAG, "auto_range: %.1f mA flowing with no load commanded, not treating it as sensor "
+                      "offset (check the VCCS reference: C1/C2/R8 to GND, op-amp offset)",
+                 offset_i_mA);
+        offset_i_mA = 0.0f;
+    }
     *out_offset_mA = offset_i_mA;
     ESP_LOGI(TAG, "auto_range: INA219 zero-current offset = %.2f mA", offset_i_mA);
 
