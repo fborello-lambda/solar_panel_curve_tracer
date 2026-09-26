@@ -170,6 +170,34 @@
       flex-shrink: 0;
     }
 
+    .lang-toggle {
+      display: inline-flex;
+      align-items: stretch;
+      height: 44px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--secondary-bg);
+      overflow: hidden;
+      flex: none;
+    }
+
+    .lang-opt {
+      font-family: inherit;
+      font-size: 0.8rem;
+      font-weight: 600;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 0 12px;
+      min-height: 44px;
+    }
+
+    .lang-opt[aria-pressed="true"] {
+      background: var(--primary-bg);
+      color: var(--primary-fg);
+    }
+
     .card {
       background: var(--card);
       border: 1px solid var(--border);
@@ -197,7 +225,9 @@
       margin-bottom: 16px;
     }
 
-    button {
+    button,
+    .btn-primary,
+    .btn-secondary {
       font-family: inherit;
       font-size: 1rem;
       border: 1px solid transparent;
@@ -206,6 +236,10 @@
       min-height: 44px;
       padding: 10px 18px;
       transition: opacity 120ms ease;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
     }
 
     button:disabled {
@@ -305,7 +339,10 @@
           <span class="pill-dot"></span>
           <span id="statusText" data-i18n="status_idle">Idle</span>
         </span>
-        <button id="langToggle" class="icon-btn" type="button" data-i18n-aria="toggle_lang">ES</button>
+        <div id="langToggle" class="lang-toggle" role="group" data-i18n-aria="toggle_lang">
+          <button type="button" class="lang-opt" data-lang="es" aria-pressed="false">ES</button>
+          <button type="button" class="lang-opt" data-lang="en" aria-pressed="false">EN</button>
+        </div>
         <button id="themeToggle" class="icon-btn" type="button" data-i18n-aria="toggle_theme">
           <svg id="themeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
             stroke-linecap="round" stroke-linejoin="round">
@@ -332,7 +369,7 @@
     <div class="actions">
       <button id="startMeasBtn" class="btn-primary" type="button" data-i18n="start_measurement">Start measurement</button>
       <button id="downloadCsvBtn" class="btn-secondary" type="button" data-i18n="download_csv">Download CSV</button>
-      <a id="guideLink" class="btn-secondary" href="/guide" style="display:inline-flex;align-items:center;justify-content:center;text-decoration:none;" data-i18n="guide">Guide</a>
+      <a id="guideLink" class="btn-secondary" href="/guide" data-i18n="guide">Guide</a>
     </div>
 
     <div class="stats">

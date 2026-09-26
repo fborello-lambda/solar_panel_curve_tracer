@@ -85,15 +85,18 @@
 
   // Language toggle
   const langToggle = document.getElementById("langToggle");
+  const langOpts = langToggle ? Array.from(langToggle.querySelectorAll(".lang-opt")) : [];
   function updateLangBtn() {
-    if (!langToggle) return;
-    langToggle.textContent = i18n.getLang() === "es" ? "EN" : "ES";
-  }
-  if (langToggle) {
-    langToggle.addEventListener("click", function () {
-      i18n.setLang(i18n.getLang() === "es" ? "en" : "es");
+    const current = i18n.getLang();
+    langOpts.forEach(function (btn) {
+      btn.setAttribute("aria-pressed", btn.getAttribute("data-lang") === current ? "true" : "false");
     });
   }
+  langOpts.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      i18n.setLang(btn.getAttribute("data-lang"));
+    });
+  });
   window.addEventListener("i18n:change", function () {
     updateLangBtn();
     if (typeof updateChartTheme === "function") updateChartTheme();

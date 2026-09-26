@@ -94,6 +94,34 @@
       cursor: pointer;
     }
 
+    .lang-toggle {
+      display: inline-flex;
+      align-items: stretch;
+      height: 44px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--secondary-bg);
+      overflow: hidden;
+      flex: none;
+    }
+
+    .lang-opt {
+      font-family: inherit;
+      font-size: 0.8rem;
+      font-weight: 600;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 0 12px;
+      min-height: 44px;
+    }
+
+    .lang-opt[aria-pressed="true"] {
+      background: var(--primary-bg);
+      color: var(--primary-fg);
+    }
+
     .icon-btn svg {
       width: 18px;
       height: 18px;
@@ -217,7 +245,10 @@
   <header>
     <h2 data-i18n="firmware_update">Firmware update</h2>
     <div class="header-right" style="display:flex;gap:8px;">
-      <button id="langToggle" class="icon-btn" type="button" data-i18n-aria="toggle_lang">ES</button>
+      <div id="langToggle" class="lang-toggle" role="group" data-i18n-aria="toggle_lang">
+        <button type="button" class="lang-opt" data-lang="es" aria-pressed="false">ES</button>
+        <button type="button" class="lang-opt" data-lang="en" aria-pressed="false">EN</button>
+      </div>
       <button id="themeToggle" class="icon-btn" type="button" data-i18n-aria="toggle_theme">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
           stroke-linejoin="round">
@@ -283,14 +314,18 @@
 
       const i18n = window.i18n || { t: (k) => k, apply: () => {}, getLang: () => "en", setLang: () => {} };
       const langToggle = document.getElementById("langToggle");
+      const langOpts = langToggle ? Array.from(langToggle.querySelectorAll(".lang-opt")) : [];
       function updateLangBtn() {
-        if (langToggle) langToggle.textContent = i18n.getLang() === "es" ? "EN" : "ES";
-      }
-      if (langToggle) {
-        langToggle.addEventListener("click", function () {
-          i18n.setLang(i18n.getLang() === "es" ? "en" : "es");
+        const current = i18n.getLang();
+        langOpts.forEach(function (btn) {
+          btn.setAttribute("aria-pressed", btn.getAttribute("data-lang") === current ? "true" : "false");
         });
       }
+      langOpts.forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          i18n.setLang(btn.getAttribute("data-lang"));
+        });
+      });
       window.addEventListener("i18n:change", function () {
         updateLangBtn();
         loadVersion();
