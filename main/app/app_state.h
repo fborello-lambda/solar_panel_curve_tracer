@@ -68,6 +68,7 @@ typedef struct
     int32_t dynamic_bus_mv;
     int32_t dynamic_shunt_uv;
     bool dynamic_measured_valid;
+    float ina_err_mA_per_V; // INA219 current error per bus volt, measured at zero load (see auto_range)
     bool dynamic_power_limited;
     uint32_t dynamic_duty_steps;
     TickType_t dynamic_last_adjust_tick;

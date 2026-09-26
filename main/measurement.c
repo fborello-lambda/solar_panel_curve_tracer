@@ -300,11 +300,10 @@ static bool sleep_chunked_checking_stop(uint32_t ms)
 // fast as I2C allows) — 100 ms spans an integer number of half-cycles of
 // both 50 Hz and 60 Hz mains flicker, so ripple from a lamp cancels out.
 // Used by both auto-range probes and recorded sweep points.
-// `i_offset_mA` is the INA219 zero-current offset (see the Voc probe in
-// auto_range()) and is subtracted from every reading before the
-// negative-current clamp; pass 0 when the offset isn't known yet (the Voc
-// probe itself).
-static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms, float i_offset_mA,
+// `err_mA_per_V` is the INA219 current-reading error per volt of bus
+// voltage (measured by auto_range()); `err_mA_per_V * V` is subtracted
+// from every reading. Pass 0 when it isn't known yet (the Voc probe).
+static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms, float err_mA_per_V,
                                        float *out_v, float *out_i_mA, float *out_power_mW)
 {
     pwm_controller_set_duty_in_res_steps(duty_steps);
@@ -343,7 +342,7 @@ static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms, f
     float shunt_uV = (float)shunt_uV_sum / (float)valid;
     int shunt_mOhm = g_app.ina_cal.shunt_resistor_mOhm;
     float current_mA = (shunt_mOhm > 0) ? (shunt_uV / (float)shunt_mOhm) : 0.0f;
-    current_mA -= i_offset_mA;
+    current_mA -= err_mA_per_V * (bus_mV / 1000.0f);
     float voltage_mV = bus_mV - (shunt_uV / 1000.0f);
 
     if (voltage_mV < 0.0f)
@@ -369,33 +368,29 @@ static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms, f
 // db. Returns false if the sweep should abort (no panel, stop requested, or
 // a safety breach).
 static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, float *out_voc_mv,
-                        float *out_offset_mA, float *out_isc_mA)
+                        float *out_err_mA_per_V, float *out_isc_mA)
 {
     sweep_range_t sr;
     sweep_range_begin(&sr, pwm_res, DB_MAX_SAMPLES);
 
-    // At duty 0 the load draws nothing, so whatever the INA219 reports here
-    // is purely its own zero-current offset error (typ +/-10 uV, up to
-    // 100 uV max on this 10 mOhm shunt, i.e. up to several mA). Stash it and
-    // subtract it from every later reading in this sweep.
-    float voc_v, offset_i_mA, dummy_p;
-    measure_result_t r = measure_point(0, SWEEP_SETTLE_MS, 0.0f, &voc_v, &offset_i_mA, &dummy_p);
+    // At duty 0 the load draws nothing (verified with the bench supply's own
+    // ammeter), yet the INA219 reads a current proportional to the bus
+    // voltage: the chip samples the bus voltage through VIN-, and that
+    // input current flowing through the 10 ohm input-filter resistors
+    // (R14/R15) looks like shunt voltage. About 3 mA per volt on rev1, so a
+    // 21 V panel would read ~65 mA with no load at all. Measure it here,
+    // where the true current is zero, and subtract err * V from every
+    // reading in this sweep.
+    float voc_v, zero_i_mA, dummy_p;
+    measure_result_t r = measure_point(0, SWEEP_SETTLE_MS, 0.0f, &voc_v, &zero_i_mA, &dummy_p);
     if (r != MEASURE_OK)
         return false;
 
-    // Only a small reading can be sensor offset. Anything larger is real
-    // current flowing with no load commanded (e.g. the op-amp reference
-    // not reaching 0 V), and subtracting it would hide the problem and
-    // skew every point.
-    if (offset_i_mA > SWEEP_MAX_ZERO_OFFSET_MA || offset_i_mA < -SWEEP_MAX_ZERO_OFFSET_MA)
-    {
-        ESP_LOGW(TAG, "auto_range: %.1f mA flowing with no load commanded, not treating it as sensor "
-                      "offset (check the VCCS reference: C1/C2/R8 to GND, op-amp offset)",
-                 offset_i_mA);
-        offset_i_mA = 0.0f;
-    }
-    *out_offset_mA = offset_i_mA;
-    ESP_LOGI(TAG, "auto_range: INA219 zero-current offset = %.2f mA", offset_i_mA);
+    float err_mA_per_V = (voc_v >= 0.5f) ? (zero_i_mA / voc_v) : 0.0f;
+    *out_err_mA_per_V = err_mA_per_V;
+    g_app.ina_err_mA_per_V = err_mA_per_V;
+    ESP_LOGI(TAG, "auto_range: zero-load reading %.2f mA at %.3f V -> current error %.3f mA/V",
+             zero_i_mA, voc_v, err_mA_per_V);
 
     float voc_mV = voc_v * 1000.0f;
     *out_voc_mv = voc_mV;
@@ -414,7 +409,7 @@ static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, 
     for (;;)
     {
         float v, i_mA, p_mW;
-        r = measure_point(sr.duty, SWEEP_SETTLE_MS, offset_i_mA, &v, &i_mA, &p_mW);
+        r = measure_point(sr.duty, SWEEP_SETTLE_MS, err_mA_per_V, &v, &i_mA, &p_mW);
         if (r != MEASURE_OK)
             return false;
 
@@ -500,8 +495,8 @@ static void producer_task(void *arg)
     ESP_LOGI(TAG, "producer_task: starting auto-range");
 
     uint32_t top = 0, knee = 0;
-    float voc_mV = 0.0f, offset_mA = 0.0f, isc_mA = 0.0f;
-    if (!auto_range(pwm_res, &top, &knee, &voc_mV, &offset_mA, &isc_mA))
+    float voc_mV = 0.0f, err_mA_per_V = 0.0f, isc_mA = 0.0f;
+    if (!auto_range(pwm_res, &top, &knee, &voc_mV, &err_mA_per_V, &isc_mA))
     {
         ESP_LOGW(TAG, "producer_task: auto-range aborted, recording nothing");
         ESP_LOGI(TAG, "producer_task stack high water mark: %u words", (unsigned)uxTaskGetStackHighWaterMark(NULL));
@@ -531,7 +526,7 @@ static void producer_task(void *arg)
         uint32_t settle_ms = (step == 0) ? SWEEP_FIRST_POINT_SETTLE_MS : SWEEP_SETTLE_MS;
 
         float v, i_mA, p_mW;
-        measure_result_t r = measure_point(duty, settle_ms, offset_mA, &v, &i_mA, &p_mW);
+        measure_result_t r = measure_point(duty, settle_ms, err_mA_per_V, &v, &i_mA, &p_mW);
 
         if (r == MEASURE_STOP_REQUESTED)
         {

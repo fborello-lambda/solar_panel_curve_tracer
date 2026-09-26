@@ -106,8 +106,15 @@ void dynamic_load_update_measured(void)
     if (valid > 0)
     {
         float avg_signed_mA = (float)sum_mA / (float)valid;
-        float avg_mA = fabsf(avg_signed_mA);
         float avg_bus_mV = (float)sum_bus_mv / (float)valid;
+
+        // At duty 0 nothing flows, so what the INA219 reads is its
+        // voltage-proportional error (see auto_range in measurement.c):
+        // recalibrate it here and subtract err * V from every reading.
+        if (g_app.dynamic_duty_steps == 0 && avg_bus_mV >= 500.0f)
+            g_app.ina_err_mA_per_V = avg_signed_mA / (avg_bus_mV / 1000.0f);
+        avg_signed_mA -= g_app.ina_err_mA_per_V * (avg_bus_mV / 1000.0f);
+        float avg_mA = fabsf(avg_signed_mA);
 
         g_app.dynamic_measured_mA = (avg_mA < 3.0f) ? 0.0f : avg_mA;
         g_app.dynamic_bus_mv = sum_bus_mv / valid;

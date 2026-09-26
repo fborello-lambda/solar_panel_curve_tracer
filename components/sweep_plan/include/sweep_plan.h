@@ -25,7 +25,6 @@ extern "C"
 #define SWEEP_DUTY_MAX_PERCENT 20        // hard ceiling on commanded duty, % of pwm_res
 #define SWEEP_KNEE_HEADROOM_PERCENT 115  // sweep top = knee * this / 100
 #define SWEEP_VOC_MIN_MV 500             // below this, no panel worth sweeping
-#define SWEEP_MAX_ZERO_OFFSET_MA 5.0f    // larger zero-load readings are real current, not INA219 offset
 
     // ── auto-range state machine ────────────────────────────────────────
 
