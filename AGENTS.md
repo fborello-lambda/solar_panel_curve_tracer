@@ -24,7 +24,8 @@ main/
   drivers/
     driver_ina219     # INA219 I2C driver (32 V / 10 A calibration preset)
     driver_sh1106     # SH1106 OLED driver (framebuffer, text, QR)
-    driver_encoder    # Rotary encoder GPIO ISR
+    driver_encoder    # Rotary encoder GPIO ISR: quadrature decode (components/quadrature)
+                       # for rotation, esp_timer settle + ANYEDGE state machine for the button
     pwm_controller    # LEDC wrapper (GPIO 8, 8 kHz, 13-bit)
   utils/
     init.c/h          # Wi-Fi soft-AP, NVS, HTTP server startup
@@ -41,6 +42,8 @@ components/
                        # machine. No hardware/FreeRTOS deps, so it builds on the
                        # `linux` IDF target, which is what test/host/ exercises.
   json_builder        # Pure JSON array serialiser for /data (also linux-target testable)
+  quadrature          # Pure Gray-code quadrature decoder (no hardware/FreeRTOS deps,
+                       # linux-target testable) used by driver_encoder for rotation
 test/host/            # Standalone ESP-IDF project, `linux` target, Unity host tests
                        # for components/sweep_plan and components/json_builder
 partitions.csv        # Custom flash layout (see below); storage partition unused
@@ -89,6 +92,11 @@ Partition table offset: `0xD000` (pushed up to fit the secure-boot-signed bootlo
 - **Global state**: single `g_app` (app_state_t) struct; always acquire `g_app.state_mtx` before touching measurement fields.
 - **Producer/consumer**: producer task sweeps PWM and writes to `db`; display task reads from `db` and renders; HTTP `/data` snapshots `db`.
 - **Two producer modes**: `producer_task` (real INA219 hardware) and `dummy_producer_task` (synthetic curve for testing without hardware).
+- **Detent-less encoder**: the rotary encoder has no tactile detents, so `ui.c` clamps list navigation
+  (home sections, submenus, measure screen items) at the first/last item instead of wrapping, and draws
+  the selected row inverted with a "N/total" position hint. The OLED blanks itself (`0xAE`) after
+  `OLED_IDLE_TIMEOUT_S` (default 60 s) of no encoder activity, except on the dynamic load screen; the
+  first encoder event after that only wakes the panel and is otherwise swallowed.
 - **Dynamic load**: encoder adjusts PWM setpoint live, capped at `DYNAMIC_LOAD_DUTY_MAX_PERCENT` (10% duty). It
   shares the same `LOAD_POWER_LIMIT_MW` (5000 mW) power cap as the sweep, with a hysteresis margin
   (`LOAD_POWER_NEAR_MARGIN_MW`) before backing off duty.

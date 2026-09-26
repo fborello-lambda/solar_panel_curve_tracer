@@ -72,6 +72,48 @@ static void display_task(void *arg)
             g_app.display_dirty = true;
         }
 
+        // Wake requested by the encoder task (ui_wake_if_off()). display_task
+        // is the sole writer of display_off and the sole caller of the
+        // sh1106 on/off commands, so this can't race with the blanking below.
+        if (g_app.display_wake_pending)
+        {
+            g_app.display_wake_pending = false;
+            if (g_app.display_off)
+            {
+                g_app.display_off = false;
+                if (g_app.display.dev != NULL)
+                {
+                    sh1106_set_display_on(&g_app.display, true);
+                }
+                g_app.display_dirty = true;
+            }
+        }
+
+        // OLED screen saver: blank the panel after OLED_IDLE_TIMEOUT_S with no
+        // encoder activity, to avoid burn-in. The dynamic load screen is
+        // exempt (it's a live readout the operator watches without touching
+        // the encoder); a running sweep is not exempt on its own.
+        if (!g_app.display_off && g_app.ui_screen != UI_SCREEN_ACTION_DYNAMIC_LOAD)
+        {
+            TickType_t idle_ticks = xTaskGetTickCount() - g_app.last_activity_tick;
+            if (idle_ticks >= pdMS_TO_TICKS(OLED_IDLE_TIMEOUT_S * 1000))
+            {
+                g_app.display_off = true;
+                if (g_app.display.dev != NULL)
+                {
+                    sh1106_clear(&g_app.display);
+                    sh1106_set_display_on(&g_app.display, false);
+                }
+                g_app.display_dirty = false;
+                continue;
+            }
+        }
+
+        if (g_app.display_off)
+        {
+            continue;
+        }
+
         if (!g_app.display_dirty)
         {
             continue;
@@ -187,10 +229,9 @@ void app_tasks_start(void)
         .clk_pin = ENC_CLK_GPIO,
         .sw_pin = ENC_SW_GPIO,
         .use_internal_pullups = true,
-        .sw_debounce_ms = 180,
+        .sw_debounce_ms = 25,
         .event_queue_len = 32,
-        .counts_per_step = 4,      // raise to make the menu less sensitive, lower for snappier
-        .rotation_debounce_ms = 5,
+        .counts_per_step = 16, // valid transitions per menu step (4 per quadrature cycle): same travel as before, raise to make it less sensitive
     };
 
     esp_err_t enc_ret = encoder_init(&enc_cfg);

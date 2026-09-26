@@ -73,6 +73,11 @@ typedef struct
     TickType_t dynamic_last_adjust_tick;
     TickType_t dynamic_last_sample_tick;
     bool display_dirty;
+    TickType_t last_activity_tick; // last encoder rotate/button, for the OLED screen saver
+    bool display_off;              // true once the screen saver has blanked the OLED
+    bool display_wake_pending;     // set by the encoder task, consumed only by display_task:
+                                    // display_task is the sole owner of display_off and the
+                                    // only task allowed to talk to the OLED over I2C
 } app_state_t;
 
 extern app_state_t g_app;
@@ -95,3 +100,4 @@ extern app_state_t g_app;
 #define DYNAMIC_LOAD_SETTLE_MS 80
 #define LOAD_POWER_LIMIT_MW 5000.0f
 #define LOAD_POWER_NEAR_MARGIN_MW 150.0f
+#define OLED_IDLE_TIMEOUT_S 60

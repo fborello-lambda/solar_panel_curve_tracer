@@ -384,7 +384,7 @@ static bool glyph_for_char(char c, uint8_t out[5])
     }
 }
 
-static void sh1106_fb_draw_char(uint8_t *fb, int x, int y, char c)
+static void sh1106_fb_draw_char_on(uint8_t *fb, int x, int y, char c, bool on)
 {
     uint8_t glyph[5];
     glyph_for_char(c, glyph);
@@ -394,13 +394,18 @@ static void sh1106_fb_draw_char(uint8_t *fb, int x, int y, char c)
         const uint8_t bits = glyph[col];
         for (int row = 0; row < 8; row++)
         {
-            const bool on = ((bits >> row) & 0x01U) != 0;
-            if (on)
+            const bool lit = ((bits >> row) & 0x01U) != 0;
+            if (lit)
             {
-                sh1106_fb_set_pixel(fb, x + col, y + row, true);
+                sh1106_fb_set_pixel(fb, x + col, y + row, on);
             }
         }
     }
+}
+
+static void sh1106_fb_draw_char(uint8_t *fb, int x, int y, char c)
+{
+    sh1106_fb_draw_char_on(fb, x, y, c, true);
 }
 
 void sh1106_fb_draw_text(uint8_t *fb, int x, int y, const char *txt)
@@ -436,4 +441,33 @@ void sh1106_fb_draw_text(uint8_t *fb, int x, int y, const char *txt)
             break;
         }
     }
+}
+
+void sh1106_fb_draw_text_inverted(uint8_t *fb, int x, int y, const char *txt)
+{
+    if (!fb || !txt)
+    {
+        return;
+    }
+
+    // Single-line only: fill a full-width bar for the row, then draw the
+    // glyphs unlit on top of it.
+    sh1106_fb_draw_rect(fb, 0, y, SH1106_WIDTH, 8, true, true);
+
+    int x_cur = x;
+    for (size_t i = 0; txt[i] != '\0' && x_cur <= SH1106_WIDTH - 6; i++)
+    {
+        sh1106_fb_draw_char_on(fb, x_cur, y, txt[i], false);
+        x_cur += 6;
+    }
+}
+
+esp_err_t sh1106_set_display_on(const sh1106_t *display, bool on)
+{
+    if (!display || !display->dev)
+    {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    return sh1106_write_cmd(display, on ? 0xAF : 0xAE);
 }

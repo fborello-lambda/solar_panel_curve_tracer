@@ -29,6 +29,12 @@ void test_json_builder_cap_fits_one_element(void);
 void test_json_builder_cap_fits_two_elements(void);
 void test_json_builder_cap_too_small_for_brackets(void);
 
+// quadrature decoder
+void test_quadrature_cw_sequence_emits_one_step_per_cycle(void);
+void test_quadrature_ccw_sequence_emits_negative_one_step_per_cycle(void);
+void test_quadrature_bounce_emits_nothing(void);
+void test_quadrature_invalid_jump_ignored(void);
+
 void app_main(void)
 {
     UNITY_BEGIN();
@@ -53,6 +59,11 @@ void app_main(void)
     RUN_TEST(test_json_builder_cap_fits_one_element);
     RUN_TEST(test_json_builder_cap_fits_two_elements);
     RUN_TEST(test_json_builder_cap_too_small_for_brackets);
+
+    RUN_TEST(test_quadrature_cw_sequence_emits_one_step_per_cycle);
+    RUN_TEST(test_quadrature_ccw_sequence_emits_negative_one_step_per_cycle);
+    RUN_TEST(test_quadrature_bounce_emits_nothing);
+    RUN_TEST(test_quadrature_invalid_jump_ignored);
 
     int failures = UNITY_END();
 

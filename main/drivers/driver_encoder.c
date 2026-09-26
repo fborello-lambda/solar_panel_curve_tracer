@@ -3,9 +3,18 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 
+#include <esp_timer.h>
+
+#include "quadrature.h"
+
 #ifndef CONFIG_FREERTOS_HZ
 #define CONFIG_FREERTOS_HZ 100
 #endif
+
+// Ignore a button press that lands within this long after the last emitted
+// rotation step: it's almost always a thumb pushing down on the knob while
+// still turning it, not a deliberate click.
+#define ENCODER_POST_ROTATE_SUPPRESS_MS 150
 
 static uint32_t ticks_to_ms(TickType_t ticks)
 {
@@ -25,103 +34,103 @@ typedef struct
     uint32_t sw_debounce_ms;
     QueueHandle_t queue;
     volatile int32_t position;
-    volatile int last_clk_level;
-    volatile TickType_t last_sw_tick;
+    qdec_t qdec;
     uint32_t counts_per_step;
-    uint32_t rotation_debounce_ms;
-    volatile int32_t step_accum;
-    volatile TickType_t last_rot_tick;
+    volatile TickType_t last_rot_emit_tick;
+    volatile bool sw_stable_high; // debounced button state: true = released (idle, pulled up)
+    esp_timer_handle_t sw_timer;
     bool initialized;
 } encoder_state_t;
 
 static encoder_state_t s_encoder = {0};
 
-static void IRAM_ATTR encoder_isr(void *arg)
+static void IRAM_ATTR encoder_rot_isr(void *arg)
 {
-    uint32_t pin = (uint32_t)(uintptr_t)arg;
+    (void)arg;
 
-    if (pin == (uint32_t)s_encoder.clk_pin)
+    int clk = gpio_get_level(s_encoder.clk_pin);
+    int dt = gpio_get_level(s_encoder.dt_pin);
+
+    int step = qdec_update(&s_encoder.qdec, clk, dt, s_encoder.counts_per_step);
+    if (step == 0)
     {
-        int clk = gpio_get_level(s_encoder.clk_pin);
-        if (clk != s_encoder.last_clk_level)
+        return;
+    }
+
+    TickType_t now = xTaskGetTickCountFromISR();
+    s_encoder.position += step;
+    s_encoder.last_rot_emit_tick = now;
+
+    if (s_encoder.queue)
+    {
+        BaseType_t woke = pdFALSE;
+        encoder_event_t ev = {
+            .type = (step > 0) ? ENCODER_EVENT_CW : ENCODER_EVENT_CCW,
+            .position = s_encoder.position,
+            .timestamp_ms = ticks_to_ms(now),
+        };
+        xQueueSendFromISR(s_encoder.queue, &ev, &woke);
+        if (woke)
         {
-            s_encoder.last_clk_level = clk;
-            if (clk == 1)
-            {
-                TickType_t now = xTaskGetTickCountFromISR();
-                TickType_t debounce_ticks = ms_to_ticks(s_encoder.rotation_debounce_ms);
-                if ((now - s_encoder.last_rot_tick) < debounce_ticks)
-                {
-                    return; // reject bounce: too soon after the last accepted edge
-                }
-                s_encoder.last_rot_tick = now;
-
-                int dt = gpio_get_level(s_encoder.dt_pin);
-                int dir = (dt != clk) ? 1 : -1;
-                s_encoder.position += dir;
-
-                // Reset the accumulator on a direction reversal so flipping
-                // direction responds immediately.
-                if ((dir > 0 && s_encoder.step_accum < 0) ||
-                    (dir < 0 && s_encoder.step_accum > 0))
-                {
-                    s_encoder.step_accum = 0;
-                }
-                s_encoder.step_accum += dir;
-
-                int emit = 0;
-                if (s_encoder.step_accum >= (int32_t)s_encoder.counts_per_step)
-                {
-                    emit = 1;
-                    s_encoder.step_accum = 0;
-                }
-                else if (s_encoder.step_accum <= -(int32_t)s_encoder.counts_per_step)
-                {
-                    emit = -1;
-                    s_encoder.step_accum = 0;
-                }
-
-                if (emit != 0 && s_encoder.queue)
-                {
-                    BaseType_t woke = pdFALSE;
-                    encoder_event_t ev = {
-                        .type = (emit > 0) ? ENCODER_EVENT_CW : ENCODER_EVENT_CCW,
-                        .position = s_encoder.position,
-                        .timestamp_ms = ticks_to_ms(now),
-                    };
-                    xQueueSendFromISR(s_encoder.queue, &ev, &woke);
-                    if (woke)
-                    {
-                        portYIELD_FROM_ISR();
-                    }
-                }
-            }
+            portYIELD_FROM_ISR();
         }
     }
-    else if (pin == (uint32_t)s_encoder.sw_pin)
+}
+
+static void IRAM_ATTR encoder_sw_isr(void *arg)
+{
+    (void)arg;
+
+    // Any edge (re)starts the settle timer; the timer callback is the only
+    // place that reads the level and decides whether a transition is real.
+    // esp_timer_start_once() is safe from ISR context and restarts a
+    // still-pending one-shot timer.
+    esp_timer_stop(s_encoder.sw_timer);
+    esp_timer_start_once(s_encoder.sw_timer, (uint64_t)s_encoder.sw_debounce_ms * 1000ULL);
+}
+
+// Runs in the esp_timer task context (not ISR context), so it may use
+// blocking-capable APIs such as xQueueSend.
+static void sw_settle_timer_cb(void *arg)
+{
+    (void)arg;
+
+    int level = gpio_get_level(s_encoder.sw_pin);
+    bool now_high = (level != 0);
+
+    if (now_high == s_encoder.sw_stable_high)
     {
-        TickType_t now = xTaskGetTickCountFromISR();
-        TickType_t debounce_ticks = ms_to_ticks(s_encoder.sw_debounce_ms);
+        return; // no real transition since the last confirmed state
+    }
 
-        if ((now - s_encoder.last_sw_tick) >= debounce_ticks)
+    TickType_t now = xTaskGetTickCount();
+
+    if (s_encoder.sw_stable_high && !now_high)
+    {
+        // Confirmed stable high -> low: a press.
+        s_encoder.sw_stable_high = false;
+
+        TickType_t suppress_ticks = ms_to_ticks(ENCODER_POST_ROTATE_SUPPRESS_MS);
+        if ((now - s_encoder.last_rot_emit_tick) < suppress_ticks)
         {
-            s_encoder.last_sw_tick = now;
-
-            BaseType_t woke = pdFALSE;
-            if (s_encoder.queue)
-            {
-                encoder_event_t ev = {
-                    .type = ENCODER_EVENT_BUTTON,
-                    .position = s_encoder.position,
-                    .timestamp_ms = ticks_to_ms(now),
-                };
-                xQueueSendFromISR(s_encoder.queue, &ev, &woke);
-            }
-            if (woke)
-            {
-                portYIELD_FROM_ISR();
-            }
+            return; // thumb pressing the knob while still turning it
         }
+
+        if (s_encoder.queue)
+        {
+            encoder_event_t ev = {
+                .type = ENCODER_EVENT_BUTTON,
+                .position = s_encoder.position,
+                .timestamp_ms = ticks_to_ms(now),
+            };
+            xQueueSend(s_encoder.queue, &ev, 0);
+        }
+    }
+    else
+    {
+        // Confirmed stable low -> high: a release. Update state only, a new
+        // press can only be emitted after this.
+        s_encoder.sw_stable_high = true;
     }
 }
 
@@ -145,13 +154,11 @@ esp_err_t encoder_init(const encoder_config_t *cfg)
     s_encoder.dt_pin = cfg->dt_pin;
     s_encoder.clk_pin = cfg->clk_pin;
     s_encoder.sw_pin = cfg->sw_pin;
-    s_encoder.sw_debounce_ms = (cfg->sw_debounce_ms == 0) ? 150 : cfg->sw_debounce_ms;
+    s_encoder.sw_debounce_ms = (cfg->sw_debounce_ms == 0) ? 25 : cfg->sw_debounce_ms;
     s_encoder.position = 0;
-    s_encoder.last_sw_tick = 0;
     s_encoder.counts_per_step = (cfg->counts_per_step == 0) ? 4 : cfg->counts_per_step;
-    s_encoder.rotation_debounce_ms = (cfg->rotation_debounce_ms == 0) ? 5 : cfg->rotation_debounce_ms;
-    s_encoder.step_accum = 0;
-    s_encoder.last_rot_tick = 0;
+    s_encoder.last_rot_emit_tick = 0;
+    s_encoder.sw_stable_high = true;
 
     uint32_t q_len = (cfg->event_queue_len == 0) ? 16 : cfg->event_queue_len;
     s_encoder.queue = xQueueCreate(q_len, sizeof(encoder_event_t));
@@ -160,14 +167,12 @@ esp_err_t encoder_init(const encoder_config_t *cfg)
         return ESP_ERR_NO_MEM;
     }
 
-    // DT is only sampled (as a level) from inside the CLK edge handler, so
-    // it needs no interrupt of its own; only CLK drives the ISR.
     gpio_config_t dt_cfg = {
         .pin_bit_mask = (1ULL << s_encoder.dt_pin),
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = cfg->use_internal_pullups ? GPIO_PULLUP_ENABLE : GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
+        .intr_type = GPIO_INTR_ANYEDGE,
     };
     ESP_ERROR_CHECK(gpio_config(&dt_cfg));
 
@@ -185,22 +190,39 @@ esp_err_t encoder_init(const encoder_config_t *cfg)
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = cfg->use_internal_pullups ? GPIO_PULLUP_ENABLE : GPIO_PULLUP_DISABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_NEGEDGE,
+        .intr_type = GPIO_INTR_ANYEDGE,
     };
     ESP_ERROR_CHECK(gpio_config(&sw_cfg));
+
+    const esp_timer_create_args_t timer_args = {
+        .callback = sw_settle_timer_cb,
+        .arg = NULL,
+        .name = "enc_sw_settle",
+    };
+    esp_err_t timer_ret = esp_timer_create(&timer_args, &s_encoder.sw_timer);
+    if (timer_ret != ESP_OK)
+    {
+        vQueueDelete(s_encoder.queue);
+        s_encoder.queue = NULL;
+        return timer_ret;
+    }
 
     esp_err_t ret = gpio_install_isr_service(0);
     if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE)
     {
+        esp_timer_delete(s_encoder.sw_timer);
+        s_encoder.sw_timer = NULL;
         vQueueDelete(s_encoder.queue);
         s_encoder.queue = NULL;
         return ret;
     }
 
-    s_encoder.last_clk_level = gpio_get_level(s_encoder.clk_pin);
+    qdec_init(&s_encoder.qdec, gpio_get_level(s_encoder.clk_pin), gpio_get_level(s_encoder.dt_pin));
+    s_encoder.sw_stable_high = gpio_get_level(s_encoder.sw_pin) != 0;
 
-    ESP_ERROR_CHECK(gpio_isr_handler_add(s_encoder.clk_pin, encoder_isr, (void *)(uintptr_t)s_encoder.clk_pin));
-    ESP_ERROR_CHECK(gpio_isr_handler_add(s_encoder.sw_pin, encoder_isr, (void *)(uintptr_t)s_encoder.sw_pin));
+    ESP_ERROR_CHECK(gpio_isr_handler_add(s_encoder.clk_pin, encoder_rot_isr, NULL));
+    ESP_ERROR_CHECK(gpio_isr_handler_add(s_encoder.dt_pin, encoder_rot_isr, NULL));
+    ESP_ERROR_CHECK(gpio_isr_handler_add(s_encoder.sw_pin, encoder_sw_isr, NULL));
 
     s_encoder.initialized = true;
     return ESP_OK;

@@ -32,11 +32,15 @@ esp_err_t sh1106_set_rotation(const sh1106_t *display, bool rotate_180);
 void sh1106_set_column_offset(sh1106_t *display, uint8_t column_offset);
 esp_err_t sh1106_clear(const sh1106_t *display);
 esp_err_t sh1106_flush(const sh1106_t *display, const uint8_t *fb, size_t len);
+esp_err_t sh1106_set_display_on(const sh1106_t *display, bool on);
 
 void sh1106_fb_clear(uint8_t *fb, bool on);
 void sh1106_fb_set_pixel(uint8_t *fb, int x, int y, bool on);
 void sh1106_fb_draw_rect(uint8_t *fb, int x, int y, int w, int h, bool fill, bool on);
 void sh1106_fb_draw_text(uint8_t *fb, int x, int y, const char *txt);
+// Draws txt on a filled bar spanning the full panel width (unlit text on a
+// lit background), for a clearly-selected row on a detent-less menu.
+void sh1106_fb_draw_text_inverted(uint8_t *fb, int x, int y, const char *txt);
 
 #ifdef __cplusplus
 }
