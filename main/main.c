@@ -1,5 +1,4 @@
 #include <esp_log.h>
-#include <esp_ota_ops.h>
 #include <esp_sleep.h>
 #include <esp_system.h>
 
@@ -42,12 +41,6 @@ void app_main(void)
     if (!measurement_init_load_control_hw())
     {
         ESP_LOGW(TAG, "Load control hardware not fully ready; REAL measurement mode will be refused");
-    }
-
-    esp_err_t rollback_ret = esp_ota_mark_app_valid_cancel_rollback();
-    if (rollback_ret != ESP_OK)
-    {
-        ESP_LOGD(TAG, "esp_ota_mark_app_valid_cancel_rollback: %s", esp_err_to_name(rollback_ret));
     }
 
     if (led_init(WS2812_GPIO) == ESP_OK)
