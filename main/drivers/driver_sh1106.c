@@ -76,7 +76,7 @@ esp_err_t sh1106_init_on_bus(sh1106_t *display, i2c_master_bus_handle_t bus, uin
     const uint8_t init_cmds[] = {
         0xAE,
         0xD5,
-        0x80,
+        0xF0, // fastest internal oscillator: less visible flicker/banding on phone cameras
         0xA8,
         0x3F,
         0xD3,
@@ -91,7 +91,7 @@ esp_err_t sh1106_init_on_bus(sh1106_t *display, i2c_master_bus_handle_t bus, uin
         0xDA,
         0x12,
         0x81,
-        0x7F,
+        0xCF, // higher contrast so QR codes read well
         0xD9,
         0xF1,
         0xDB,

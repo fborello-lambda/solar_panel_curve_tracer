@@ -61,12 +61,12 @@ static const char *ui_home_title(int index)
     return titles[i];
 }
 
-#define UI_MENU_MAX_ITEMS 5
+#define UI_MENU_MAX_ITEMS 4
 
 static const char *const s_menu_items[HOME_SECTION_COUNT][UI_MENU_MAX_ITEMS] = {
-    [HOME_SECTION_NETWORK] = {"SHOW WIFI QR", "SHOW AP IP QR", "SHOW GUIDE QR", "SHOW REPO QR", "BACK"},
-    [HOME_SECTION_MEASURE] = {"CURVE TRACER", "DYNAMIC LOAD", "BACK", NULL, NULL},
-    [HOME_SECTION_SYSTEM] = {"OTA", "RESET", "DEEP SLEEP", "BACK", NULL},
+    [HOME_SECTION_NETWORK] = {"SHOW WIFI QR", "SHOW AP IP QR", "SHOW REPO QR", "BACK"},
+    [HOME_SECTION_MEASURE] = {"CURVE TRACER", "DYNAMIC LOAD", "BACK", NULL},
+    [HOME_SECTION_SYSTEM] = {"OTA", "RESET", "DEEP SLEEP", "BACK"},
 };
 
 static const char *ui_menu_item_label(int home_index, int menu_index)
@@ -214,10 +214,6 @@ void ui_on_button(void)
             {
                 g_app.ui_qr_kind = UI_QR_AP_IP;
             }
-            else if (g_app.ui_menu_index == 2)
-            {
-                g_app.ui_qr_kind = UI_QR_GUIDE;
-            }
             else
             {
                 g_app.ui_qr_kind = UI_QR_REPO;
@@ -326,8 +322,12 @@ typedef struct
 {
     uint8_t *fb;
     int cell_px;
-    int quiet_zone;
+    bool drawn;
 } qr_render_ctx_t;
+
+// Largest QR (in modules) that still leaves a lit margin on the 64 px tall
+// panel at the requested module size.
+#define QR_MAX_PX (SH1106_HEIGHT - 4)
 
 static void qr_draw_to_oled_cb(esp_qrcode_handle_t qrcode, void *user_data)
 {
@@ -338,49 +338,32 @@ static void qr_draw_to_oled_cb(esp_qrcode_handle_t qrcode, void *user_data)
     }
 
     int size = esp_qrcode_get_size(qrcode);
-    int quiet = ctx->quiet_zone;
     int cell_px = ctx->cell_px;
-    int modules = size + (quiet * 2);
-
-    while ((modules * cell_px) > (SH1106_HEIGHT - 2) && cell_px > 1)
+    int qr_px = size * cell_px;
+    if (qr_px > QR_MAX_PX)
     {
-        cell_px--;
-    }
-    while (((size + (quiet * 2)) * cell_px) > (SH1106_HEIGHT - 2) && quiet > 0)
-    {
-        quiet--;
+        // Too big at this module size: leave drawn=false so the caller
+        // retries with lower error correction or smaller modules.
+        return;
     }
 
-    modules = size + (quiet * 2);
-    int qr_px = modules * cell_px;
+    // Phone scanners expect dark modules on a light background, so light
+    // the whole panel (it doubles as the quiet zone) and draw the dark
+    // modules as unlit pixels.
+    sh1106_fb_clear(ctx->fb, true);
+
     int x0 = (SH1106_WIDTH - qr_px) / 2;
     int y0 = ((SH1106_HEIGHT - qr_px) / 2) + OLED_QR_Y_OFFSET;
-
-    if (y0 < 1)
+    if (y0 + qr_px > SH1106_HEIGHT)
     {
-        y0 = 1;
-    }
-    if (y0 + qr_px > SH1106_HEIGHT - 1)
-    {
-        y0 = SH1106_HEIGHT - qr_px - 1;
+        y0 = SH1106_HEIGHT - qr_px;
     }
 
-    sh1106_fb_draw_rect(ctx->fb, x0 - 1, y0 - 1, qr_px + 2, qr_px + 2, false, true);
-
-    for (int y = 0; y < modules; y++)
+    for (int y = 0; y < size; y++)
     {
-        for (int x = 0; x < modules; x++)
+        for (int x = 0; x < size; x++)
         {
-            int mx = x - quiet;
-            int my = y - quiet;
-            bool on = false;
-
-            if (mx >= 0 && my >= 0 && mx < size && my < size)
-            {
-                on = esp_qrcode_get_module(qrcode, mx, my);
-            }
-
-            if (on)
+            if (esp_qrcode_get_module(qrcode, x, y))
             {
                 sh1106_fb_draw_rect(ctx->fb,
                                     x0 + x * cell_px,
@@ -388,10 +371,11 @@ static void qr_draw_to_oled_cb(esp_qrcode_handle_t qrcode, void *user_data)
                                     cell_px,
                                     cell_px,
                                     true,
-                                    true);
+                                    false);
             }
         }
     }
+    ctx->drawn = true;
 }
 
 static void draw_real_qr_to_fb(uint8_t *fb, const char *payload)
@@ -401,28 +385,37 @@ static void draw_real_qr_to_fb(uint8_t *fb, const char *payload)
         return;
     }
 
-    qr_render_ctx_t ctx = {
-        .fb = fb,
-        .cell_px = 2,
-        .quiet_zone = 2,
+    // Prefer 2 px modules with the strongest error correction that fits,
+    // so a flickering OLED or a slightly blurry camera frame still decodes.
+    // Long payloads (the GitHub guide URL) fall back to 1 px modules.
+    static const int ecc_levels[] = {
+        ESP_QRCODE_ECC_HIGH,
+        ESP_QRCODE_ECC_QUART,
+        ESP_QRCODE_ECC_MED,
+        ESP_QRCODE_ECC_LOW,
     };
+    static const int cell_sizes[] = {2, 1};
 
-    // Version cap raised from 2 to 6: the repo-guide QR payload is an
-    // ~89-char GitHub URL, which needs QR version 5 at ECC LOW (max 106
-    // bytes) to encode; version 2 (32 bytes max) only fit the short
-    // http://192.168.4.1/... payloads used elsewhere. The renderer below
-    // (qr_draw_to_oled_cb) already auto-shrinks cell_px down to fit
-    // SH1106_HEIGHT, so shorter payloads still render exactly as before.
+    qr_render_ctx_t ctx = {.fb = fb};
     esp_qrcode_config_t cfg = ESP_QRCODE_CONFIG_DEFAULT();
     cfg.display_func_with_cb = qr_draw_to_oled_cb;
     cfg.user_data = &ctx;
-    cfg.max_qrcode_version = 6;
-    cfg.qrcode_ecc_level = ESP_QRCODE_ECC_LOW;
+    cfg.max_qrcode_version = 10;
 
-    if (esp_qrcode_generate(&cfg, payload) != ESP_OK)
+    for (size_t c = 0; c < sizeof(cell_sizes) / sizeof(cell_sizes[0]) && !ctx.drawn; c++)
     {
-        sh1106_fb_draw_text(fb, 0, 0, "QR GEN ERROR");
-        sh1106_fb_draw_text(fb, 0, 12, "QR ERROR");
+        ctx.cell_px = cell_sizes[c];
+        for (size_t e = 0; e < sizeof(ecc_levels) / sizeof(ecc_levels[0]) && !ctx.drawn; e++)
+        {
+            cfg.qrcode_ecc_level = ecc_levels[e];
+            esp_qrcode_generate(&cfg, payload);
+        }
+    }
+
+    if (!ctx.drawn)
+    {
+        sh1106_fb_clear(fb, false);
+        sh1106_fb_draw_text(fb, 0, 24, "QR ERROR");
     }
 }
 
@@ -459,7 +452,6 @@ void ui_render_display_frame(uint8_t *fb)
         char line1[24] = {0};
         char line2[24] = {0};
         char line3[24] = {0};
-        char line4[24] = {0};
         int item_count = ui_menu_item_count(g_app.ui_home_index);
 
         snprintf(line0, sizeof(line0), "%s %s",
@@ -480,23 +472,12 @@ void ui_render_display_frame(uint8_t *fb)
                      g_app.ui_menu_index == 3 ? ">>" : "  ",
                      ui_menu_item_label(g_app.ui_home_index, 3));
         }
-        if (item_count > 4)
-        {
-            snprintf(line4, sizeof(line4), "%s %s",
-                     g_app.ui_menu_index == 4 ? ">>" : "  ",
-                     ui_menu_item_label(g_app.ui_home_index, 4));
-        }
 
-        int section_y = (item_count > 4) ? 10 : (item_count > 3) ? 16
-                                                                  : 18;
-        int line0_y = (item_count > 4) ? 20 : (item_count > 3) ? 24
-                                                                : 30;
-        int line1_y = (item_count > 4) ? 28 : (item_count > 3) ? 34
-                                                                : 42;
-        int line2_y = (item_count > 4) ? 36 : (item_count > 3) ? 44
-                                                                : 54;
-        int line3_y = (item_count > 4) ? 44 : 56;
-        int line4_y = 52;
+        int section_y = (item_count > 3) ? 16 : 18;
+        int line0_y = (item_count > 3) ? 24 : 30;
+        int line1_y = (item_count > 3) ? 34 : 42;
+        int line2_y = (item_count > 3) ? 44 : 54;
+        int line3_y = 56;
 
         sh1106_fb_draw_text(fb, 0, 8, "MENU");
         sh1106_fb_draw_text(fb, 0, section_y, ui_home_title(g_app.ui_home_index));
@@ -510,10 +491,6 @@ void ui_render_display_frame(uint8_t *fb)
         {
             sh1106_fb_draw_text(fb, 0, line3_y, line3);
         }
-        if (item_count > 4)
-        {
-            sh1106_fb_draw_text(fb, 0, line4_y, line4);
-        }
         return;
     }
 
@@ -524,8 +501,6 @@ void ui_render_display_frame(uint8_t *fb)
             payload = "http://192.168.4.1";
         else if (g_app.ui_qr_kind == UI_QR_OTA)
             payload = "http://192.168.4.1/ota";
-        else if (g_app.ui_qr_kind == UI_QR_GUIDE)
-            payload = "http://192.168.4.1/guide";
         else if (g_app.ui_qr_kind == UI_QR_REPO)
             payload = "https://github.com/fborello-lambda/solar_panel_curve_tracer/blob/main/docs/quick_guide.md";
         else
