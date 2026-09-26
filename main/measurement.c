@@ -380,8 +380,9 @@ static void dummy_producer_task(void *arg)
 {
     (void)arg;
 
+    // DEMO mode only replays a canned curve; it must never drive the real
+    // load, so no pwm_controller_set_duty calls happen in this task.
     int8_t duty = 0;
-    pwm_controller_set_duty(duty); // duty is a percentage (0..100)
     ESP_LOGI(TAG, "dummy_producer_task: Starting data production");
 
     float x_array[] = {22.464, 22.215, 21.942, 21.661, 21.365, 21.059, 20.731, 20.391, 20.021, 19.612, 19.164, 18.624, 17.823, 16.489, 14.571, 6.140, 0.060, 0.060, 0.059, 0.060};
@@ -411,7 +412,6 @@ static void dummy_producer_task(void *arg)
         if (duty > 100)
             duty = 100;
 
-        pwm_controller_set_duty(duty); // duty is a percentage (0..100)
         vTaskDelay(pdMS_TO_TICKS(250)); // pace like a real sweep, ~250 ms/point
     }
 
