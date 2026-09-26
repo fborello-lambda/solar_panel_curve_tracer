@@ -34,10 +34,9 @@ typedef struct
     gpio_num_t clk_pin;
     gpio_num_t sw_pin;
     bool use_internal_pullups;
-    uint32_t sw_debounce_ms;
+    uint32_t sw_debounce_ms;   /* button settle time before a transition is confirmed; 0 -> default (25 ms) */
     uint32_t event_queue_len;
-    uint32_t counts_per_step;      /* raw pulses per emitted CW/CCW event; 0 -> default */
-    uint32_t rotation_debounce_ms; /* min ms between accepted rotation edges; 0 -> default */
+    uint32_t counts_per_step;  /* valid quarter-step quadrature transitions per emitted CW/CCW event; 0 -> default (4) */
 } encoder_config_t;
 
 esp_err_t encoder_init(const encoder_config_t *cfg);

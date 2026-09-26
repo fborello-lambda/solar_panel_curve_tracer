@@ -43,6 +43,49 @@ static int wrap_index(int value, int count)
     return value;
 }
 
+// The encoder has no detents, so overshooting past the first/last item is
+// easy to do by feel. Clamp list navigation instead of wrapping: spinning
+// fully one way reliably lands on (and stays on) the top or bottom item.
+static int clamp_index(int value, int count)
+{
+    if (count <= 0)
+    {
+        return 0;
+    }
+    if (value < 0)
+    {
+        return 0;
+    }
+    if (value >= count)
+    {
+        return count - 1;
+    }
+    return value;
+}
+
+static void ui_mark_activity(void)
+{
+    g_app.last_activity_tick = xTaskGetTickCount();
+}
+
+// Returns true if the screen was off and this event should only wake it
+// (the event itself is swallowed, not applied to navigation/selection).
+static bool ui_wake_if_off(void)
+{
+    if (!g_app.display_off)
+    {
+        return false;
+    }
+
+    g_app.display_off = false;
+    if (g_app.display.dev != NULL)
+    {
+        sh1106_set_display_on(&g_app.display, true);
+    }
+    app_display_mark_dirty();
+    return true;
+}
+
 static void ui_set_screen(ui_screen_t screen)
 {
     g_app.ui_screen = screen;
@@ -151,28 +194,37 @@ void ui_init_state(void)
     g_app.dynamic_last_adjust_tick = 0;
     g_app.dynamic_last_sample_tick = 0;
 
+    g_app.last_activity_tick = xTaskGetTickCount();
+    g_app.display_off = false;
+
     app_display_mark_dirty();
 }
 
 void ui_on_rotate(int dir)
 {
+    ui_mark_activity();
+    if (ui_wake_if_off())
+    {
+        return;
+    }
+
     if (g_app.ui_screen == UI_SCREEN_HOME)
     {
-        g_app.ui_home_index = wrap_index(g_app.ui_home_index + dir, HOME_SECTION_COUNT);
+        g_app.ui_home_index = clamp_index(g_app.ui_home_index + dir, HOME_SECTION_COUNT);
         app_display_mark_dirty();
         return;
     }
 
     if (g_app.ui_screen == UI_SCREEN_MENU)
     {
-        g_app.ui_menu_index = wrap_index(g_app.ui_menu_index + dir, ui_menu_item_count(g_app.ui_home_index));
+        g_app.ui_menu_index = clamp_index(g_app.ui_menu_index + dir, ui_menu_item_count(g_app.ui_home_index));
         app_display_mark_dirty();
         return;
     }
 
     if (g_app.ui_screen == UI_SCREEN_ACTION_MEASURE)
     {
-        g_app.ui_measure_index = wrap_index(g_app.ui_measure_index + dir, 3);
+        g_app.ui_measure_index = clamp_index(g_app.ui_measure_index + dir, 3);
         app_display_mark_dirty();
         return;
     }
@@ -186,6 +238,12 @@ void ui_on_rotate(int dir)
 
 void ui_on_button(void)
 {
+    ui_mark_activity();
+    if (ui_wake_if_off())
+    {
+        return;
+    }
+
     if (g_app.ui_screen == UI_SCREEN_HOME)
     {
         g_app.ui_menu_index = 0;
@@ -419,59 +477,49 @@ static void draw_real_qr_to_fb(uint8_t *fb, const char *payload)
     }
 }
 
+// Draws a "N/total" position hint at the top-right, on the same row as a
+// header drawn with sh1106_fb_draw_text at y=8.
+static void draw_position_hint(uint8_t *fb, int index, int count)
+{
+    char hint[16] = {0};
+    snprintf(hint, sizeof(hint), "%d/%d", index + 1, count);
+    int x = SH1106_WIDTH - (int)strlen(hint) * 6;
+    if (x < 0)
+    {
+        x = 0;
+    }
+    sh1106_fb_draw_text(fb, x, 8, hint);
+}
+
+static void draw_list_row(uint8_t *fb, int y, bool selected, const char *label)
+{
+    if (selected)
+    {
+        sh1106_fb_draw_text_inverted(fb, 0, y, label);
+    }
+    else
+    {
+        sh1106_fb_draw_text(fb, 0, y, label);
+    }
+}
+
 void ui_render_display_frame(uint8_t *fb)
 {
     sh1106_fb_clear(fb, false);
 
     if (g_app.ui_screen == UI_SCREEN_HOME)
     {
-        char home0[24] = {0};
-        char home1[24] = {0};
-        char home2[24] = {0};
-
-        snprintf(home0, sizeof(home0), "%s %s",
-                 g_app.ui_home_index == HOME_SECTION_NETWORK ? ">>" : "  ",
-                 ui_home_title(HOME_SECTION_NETWORK));
-        snprintf(home1, sizeof(home1), "%s %s",
-                 g_app.ui_home_index == HOME_SECTION_MEASURE ? ">>" : "  ",
-                 ui_home_title(HOME_SECTION_MEASURE));
-        snprintf(home2, sizeof(home2), "%s %s",
-                 g_app.ui_home_index == HOME_SECTION_SYSTEM ? ">>" : "  ",
-                 ui_home_title(HOME_SECTION_SYSTEM));
-
         sh1106_fb_draw_text(fb, 0, 8, "HOME");
-        sh1106_fb_draw_text(fb, 0, 22, home0);
-        sh1106_fb_draw_text(fb, 0, 36, home1);
-        sh1106_fb_draw_text(fb, 0, 50, home2);
+        draw_position_hint(fb, g_app.ui_home_index, HOME_SECTION_COUNT);
+        draw_list_row(fb, 22, g_app.ui_home_index == HOME_SECTION_NETWORK, ui_home_title(HOME_SECTION_NETWORK));
+        draw_list_row(fb, 36, g_app.ui_home_index == HOME_SECTION_MEASURE, ui_home_title(HOME_SECTION_MEASURE));
+        draw_list_row(fb, 50, g_app.ui_home_index == HOME_SECTION_SYSTEM, ui_home_title(HOME_SECTION_SYSTEM));
         return;
     }
 
     if (g_app.ui_screen == UI_SCREEN_MENU)
     {
-        char line0[24] = {0};
-        char line1[24] = {0};
-        char line2[24] = {0};
-        char line3[24] = {0};
         int item_count = ui_menu_item_count(g_app.ui_home_index);
-
-        snprintf(line0, sizeof(line0), "%s %s",
-                 g_app.ui_menu_index == 0 ? ">>" : "  ",
-                 ui_menu_item_label(g_app.ui_home_index, 0));
-        snprintf(line1, sizeof(line1), "%s %s",
-                 g_app.ui_menu_index == 1 ? ">>" : "  ",
-                 ui_menu_item_label(g_app.ui_home_index, 1));
-        if (item_count > 2)
-        {
-            snprintf(line2, sizeof(line2), "%s %s",
-                     g_app.ui_menu_index == 2 ? ">>" : "  ",
-                     ui_menu_item_label(g_app.ui_home_index, 2));
-        }
-        if (item_count > 3)
-        {
-            snprintf(line3, sizeof(line3), "%s %s",
-                     g_app.ui_menu_index == 3 ? ">>" : "  ",
-                     ui_menu_item_label(g_app.ui_home_index, 3));
-        }
 
         int section_y = (item_count > 3) ? 16 : 18;
         int line0_y = (item_count > 3) ? 24 : 30;
@@ -480,16 +528,17 @@ void ui_render_display_frame(uint8_t *fb)
         int line3_y = 56;
 
         sh1106_fb_draw_text(fb, 0, 8, "MENU");
+        draw_position_hint(fb, g_app.ui_menu_index, item_count);
         sh1106_fb_draw_text(fb, 0, section_y, ui_home_title(g_app.ui_home_index));
-        sh1106_fb_draw_text(fb, 0, line0_y, line0);
-        sh1106_fb_draw_text(fb, 0, line1_y, line1);
+        draw_list_row(fb, line0_y, g_app.ui_menu_index == 0, ui_menu_item_label(g_app.ui_home_index, 0));
+        draw_list_row(fb, line1_y, g_app.ui_menu_index == 1, ui_menu_item_label(g_app.ui_home_index, 1));
         if (item_count > 2)
         {
-            sh1106_fb_draw_text(fb, 0, line2_y, line2);
+            draw_list_row(fb, line2_y, g_app.ui_menu_index == 2, ui_menu_item_label(g_app.ui_home_index, 2));
         }
         if (item_count > 3)
         {
-            sh1106_fb_draw_text(fb, 0, line3_y, line3);
+            draw_list_row(fb, line3_y, g_app.ui_menu_index == 3, ui_menu_item_label(g_app.ui_home_index, 3));
         }
         return;
     }
@@ -560,24 +609,15 @@ void ui_render_display_frame(uint8_t *fb)
 
     if (g_app.ui_screen == UI_SCREEN_ACTION_MEASURE)
     {
-        char action_line[24] = {0};
         char mode_line[24] = {0};
-        char back_line[24] = {0};
-
-        snprintf(action_line, sizeof(action_line), "%s %s",
-                 g_app.ui_measure_index == 0 ? ">>" : "  ",
-                 measurement_is_running() ? "STOP TRACE" : "START TRACE");
-        snprintf(mode_line, sizeof(mode_line), "%s MODE: %s",
-                 g_app.ui_measure_index == 1 ? ">>" : "  ",
-                 measurement_get_producer_mode_label());
-        snprintf(back_line, sizeof(back_line), "%s BACK",
-                 g_app.ui_measure_index == 2 ? ">>" : "  ");
+        snprintf(mode_line, sizeof(mode_line), "MODE: %s", measurement_get_producer_mode_label());
 
         sh1106_fb_draw_text(fb, 0, 8, "CURVE TRACER");
+        draw_position_hint(fb, g_app.ui_measure_index, 3);
         sh1106_fb_draw_text(fb, 0, 20, measurement_is_running() ? "STATE: RUNNING" : "STATE: STOPPED");
-        sh1106_fb_draw_text(fb, 0, 32, action_line);
-        sh1106_fb_draw_text(fb, 0, 44, mode_line);
-        sh1106_fb_draw_text(fb, 0, 56, back_line);
+        draw_list_row(fb, 32, g_app.ui_measure_index == 0, measurement_is_running() ? "STOP TRACE" : "START TRACE");
+        draw_list_row(fb, 44, g_app.ui_measure_index == 1, mode_line);
+        draw_list_row(fb, 56, g_app.ui_measure_index == 2, "BACK");
         return;
     }
 
