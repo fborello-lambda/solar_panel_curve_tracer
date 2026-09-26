@@ -94,6 +94,34 @@
       cursor: pointer;
     }
 
+    .lang-toggle {
+      display: inline-flex;
+      align-items: stretch;
+      height: 44px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--secondary-bg);
+      overflow: hidden;
+      flex: none;
+    }
+
+    .lang-opt {
+      font-family: inherit;
+      font-size: 0.8rem;
+      font-weight: 600;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 0 12px;
+      min-height: 44px;
+    }
+
+    .lang-opt[aria-pressed="true"] {
+      background: var(--primary-bg);
+      color: var(--primary-fg);
+    }
+
     .icon-btn svg {
       width: 18px;
       height: 18px;
@@ -215,43 +243,44 @@
 
 <body>
   <header>
-    <h2>Firmware update</h2>
-    <button id="themeToggle" class="icon-btn" type="button" aria-label="Toggle dark mode">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
-        stroke-linejoin="round">
-        <circle cx="12" cy="12" r="4"></circle>
-        <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4">
-        </path>
-      </svg>
-    </button>
+    <h2 data-i18n="firmware_update">Firmware update</h2>
+    <div class="header-right" style="display:flex;gap:8px;">
+      <div id="langToggle" class="lang-toggle" role="group" data-i18n-aria="toggle_lang">
+        <button type="button" class="lang-opt" data-lang="es" aria-pressed="false">ES</button>
+        <button type="button" class="lang-opt" data-lang="en" aria-pressed="false">EN</button>
+      </div>
+      <button id="themeToggle" class="icon-btn" type="button" data-i18n-aria="toggle_theme">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          stroke-linejoin="round">
+          <circle cx="12" cy="12" r="4"></circle>
+          <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4">
+          </path>
+        </svg>
+      </button>
+    </div>
   </header>
 
-  <p id="version">Loading version...</p>
+  <p id="version" data-i18n="version_loading">Loading version...</p>
 
   <div class="card">
-    <h3>App firmware (.bin)</h3>
-    <p class="hint">Flashes the next OTA slot and reboots into it.</p>
+    <h3 data-i18n="firmware_card_title">Firmware (app-standard.bin)</h3>
+    <p class="hint" data-i18n="firmware_hint">Flashes the next OTA slot and reboots into it.</p>
+    <p class="hint" data-i18n="firmware_only_file">The web UI is included in the firmware, so this is the only file you need.</p>
+    <p class="hint" data-i18n="firmware_download_note">Download app-standard.bin from the latest GitHub release while online, then join the ESP32_PLOT Wi-Fi network:</p>
+    <p class="hint" style="word-break:break-all;">https://github.com/fborello-lambda/solar_panel_curve_tracer/releases/latest</p>
+    <p class="hint" style="color:var(--destructive);" data-i18n="firmware_secure_warn">app-secure-boot.bin is not for standard boards. Do not upload it here.</p>
     <input id="binFile" class="file-input" type="file" accept=".bin">
-    <button id="uploadBtn" class="btn-primary" type="button">Upload and flash</button>
+    <button id="uploadBtn" class="btn-primary" type="button" data-i18n="upload_and_flash">Upload and flash</button>
     <div class="progress-wrap" id="progressWrap"><div class="progress-bar" id="progressBar"></div></div>
     <p id="status" class="status" role="status" aria-live="polite"></p>
-    <p class="reboot-note">The device reboots automatically after a successful upload.</p>
-  </div>
-
-  <div class="card">
-    <h3>Storage / SPIFFS (storage.bin)</h3>
-    <p class="hint">Erases and rewrites the web UI storage partition, then reboots.</p>
-    <input id="spiffsFile" class="file-input" type="file" accept=".bin">
-    <button id="spiffsBtn" class="btn-primary" type="button">Upload storage</button>
-    <div class="progress-wrap" id="spiffsProgressWrap"><div class="progress-bar" id="spiffsProgressBar"></div></div>
-    <p id="spiffsStatus" class="status" role="status" aria-live="polite"></p>
-    <p class="reboot-note">The device reboots automatically after a successful upload.</p>
+    <p class="reboot-note" data-i18n="reboot_note">The device reboots automatically after a successful upload.</p>
   </div>
 
   <footer>
-    <a href="/">Back to measurements</a>
+    <a href="/" data-i18n="back_to_measurements">Back to measurements</a>
   </footer>
 
+  <script src="/i18n.js"></script>
   <script>
     (function () {
       "use strict";
@@ -283,6 +312,27 @@
         });
       }
 
+      const i18n = window.i18n || { t: (k) => k, apply: () => {}, getLang: () => "en", setLang: () => {} };
+      const langToggle = document.getElementById("langToggle");
+      const langOpts = langToggle ? Array.from(langToggle.querySelectorAll(".lang-opt")) : [];
+      function updateLangBtn() {
+        const current = i18n.getLang();
+        langOpts.forEach(function (btn) {
+          btn.setAttribute("aria-pressed", btn.getAttribute("data-lang") === current ? "true" : "false");
+        });
+      }
+      langOpts.forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          i18n.setLang(btn.getAttribute("data-lang"));
+        });
+      });
+      window.addEventListener("i18n:change", function () {
+        updateLangBtn();
+        loadVersion();
+      });
+      i18n.apply();
+      updateLangBtn();
+
       const versionEl = document.getElementById("version");
 
       function setStatus(el, msg, kind) {
@@ -298,20 +348,54 @@
         try {
           const res = await fetch("/version");
           const data = await res.json();
-          versionEl.textContent = `Version: ${data.version} (${data.project})`;
+          versionEl.textContent = `${i18n.t("version_label")}: ${data.version} (${data.project})`;
         } catch (e) {
-          versionEl.textContent = "Version: unavailable";
+          versionEl.textContent = i18n.t("version_unavailable");
         }
+      }
+
+      // First byte of a valid ESP app image (ESP_IMAGE_HEADER_MAGIC), and
+      // the OTA partition size from partitions.csv (ota_0/ota_1, 1088 KB).
+      const ESP_APP_IMAGE_MAGIC_BYTE = 0xe9;
+      const MAX_OTA_SIZE = 1114112;
+
+      function readFirstByte(file) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const view = new Uint8Array(reader.result);
+            resolve(view.length ? view[0] : -1);
+          };
+          reader.onerror = () => reject(reader.error);
+          reader.readAsArrayBuffer(file.slice(0, 1));
+        });
+      }
+
+      async function validateFile(file, statusEl) {
+        if (!file) {
+          setStatus(statusEl, i18n.t("select_file_first"), "err");
+          return false;
+        }
+        if (file.size > MAX_OTA_SIZE) {
+          setStatus(statusEl, i18n.t("err_too_large"), "err");
+          return false;
+        }
+        try {
+          const firstByte = await readFirstByte(file);
+          if (firstByte !== ESP_APP_IMAGE_MAGIC_BYTE) {
+            setStatus(statusEl, i18n.t("err_bad_magic"), "err");
+            return false;
+          }
+        } catch (e) {
+          setStatus(statusEl, i18n.t("err_bad_magic"), "err");
+          return false;
+        }
+        return true;
       }
 
       function uploadWithProgress(file, endpoint, statusEl, progressWrap, progressBar) {
         return new Promise((resolve) => {
-          if (!file) {
-            setStatus(statusEl, "Select a .bin file first.", "err");
-            resolve(false);
-            return;
-          }
-          setStatus(statusEl, `Uploading ${file.name} (${file.size} bytes)...`, null);
+          setStatus(statusEl, i18n.t("uploading").replace("{name}", file.name).replace("{size}", file.size), null);
           if (progressWrap) progressWrap.style.display = "block";
           if (progressBar) progressBar.style.width = "0%";
 
@@ -331,16 +415,16 @@
             try { data = JSON.parse(xhr.responseText); } catch (e) { /* ignore parse error */ }
             if (data && data.ok) {
               if (progressBar) progressBar.style.width = "100%";
-              setStatus(statusEl, "Done. Device is rebooting...", "ok");
+              setStatus(statusEl, i18n.t("upload_done"), "ok");
               resolve(true);
             } else {
-              setStatus(statusEl, "Error: " + (data && data.error ? data.error : "Unknown error"), "err");
+              setStatus(statusEl, i18n.t("upload_error") + (data && data.error ? data.error : i18n.t("err_reason_unknown")), "err");
               resolve(false);
             }
           };
 
           xhr.onerror = function () {
-            setStatus(statusEl, "Upload failed or device rebooted.", "err");
+            setStatus(statusEl, i18n.t("upload_failed"), "err");
             resolve(false);
           };
 
@@ -356,35 +440,13 @@
 
       if (uploadBtn) {
         uploadBtn.addEventListener("click", async function () {
+          const file = fileEl && fileEl.files && fileEl.files[0];
           uploadBtn.disabled = true;
-          await uploadWithProgress(
-            fileEl && fileEl.files && fileEl.files[0],
-            "/ota",
-            statusEl,
-            progressWrap,
-            progressBar
-          );
+          const ok = await validateFile(file, statusEl);
+          if (ok) {
+            await uploadWithProgress(file, "/ota", statusEl, progressWrap, progressBar);
+          }
           uploadBtn.disabled = false;
-        });
-      }
-
-      const spiffsBtn = document.getElementById("spiffsBtn");
-      const spiffsFileEl = document.getElementById("spiffsFile");
-      const spiffsStatusEl = document.getElementById("spiffsStatus");
-      const spiffsProgressWrap = document.getElementById("spiffsProgressWrap");
-      const spiffsProgressBar = document.getElementById("spiffsProgressBar");
-
-      if (spiffsBtn) {
-        spiffsBtn.addEventListener("click", async function () {
-          spiffsBtn.disabled = true;
-          await uploadWithProgress(
-            spiffsFileEl && spiffsFileEl.files && spiffsFileEl.files[0],
-            "/ota/spiffs",
-            spiffsStatusEl,
-            spiffsProgressWrap,
-            spiffsProgressBar
-          );
-          spiffsBtn.disabled = false;
         });
       }
 

@@ -38,7 +38,7 @@ static const char *TAG = "MEASURE";
 static curve_producer_mode_t s_producer_mode = CURVE_PRODUCER_REAL;
 
 static void measurement_apply_state_locked(bool running);
-static bool measurement_start_locked(void);
+static bool measurement_start_locked(measurement_refuse_reason_t *out_reason);
 static bool measurement_stop_locked(void);
 
 static void dummy_producer_task(void *arg);
@@ -52,16 +52,26 @@ bool measurement_is_running(void)
 
 bool measurement_request(bool start)
 {
+    return measurement_request_ex(start, NULL);
+}
+
+bool measurement_request_ex(bool start, measurement_refuse_reason_t *out_reason)
+{
+    if (out_reason)
+        *out_reason = MEASUREMENT_REFUSE_NONE;
+
     if (g_app.state_mtx == NULL)
     {
         ESP_LOGW(TAG, "measurement_request: state mutex not ready");
+        if (out_reason)
+            *out_reason = MEASUREMENT_REFUSE_SENSOR_NOT_READY;
         return false;
     }
 
     bool changed = false;
     if (xSemaphoreTake(g_app.state_mtx, pdMS_TO_TICKS(50)) == pdTRUE)
     {
-        changed = start ? measurement_start_locked() : measurement_stop_locked();
+        changed = start ? measurement_start_locked(out_reason) : measurement_stop_locked();
         xSemaphoreGive(g_app.state_mtx);
     }
     else
@@ -102,6 +112,22 @@ curve_producer_mode_t measurement_get_producer_mode(void)
 const char *measurement_get_producer_mode_label(void)
 {
     return (s_producer_mode == CURVE_PRODUCER_DUMMY) ? "DEMO" : "REAL";
+}
+
+const char *measurement_refuse_reason_str(measurement_refuse_reason_t reason)
+{
+    switch (reason)
+    {
+    case MEASUREMENT_REFUSE_ALREADY_RUNNING:
+        return "already running";
+    case MEASUREMENT_REFUSE_DYNAMIC_LOAD_ACTIVE:
+        return "dynamic load active";
+    case MEASUREMENT_REFUSE_SENSOR_NOT_READY:
+        return "sensor not ready";
+    case MEASUREMENT_REFUSE_NONE:
+    default:
+        return "unknown";
+    }
 }
 
 bool measurement_init_load_control_hw(void)
@@ -160,14 +186,20 @@ static void measurement_apply_state_locked(bool running)
     app_display_mark_dirty();
 }
 
-static bool measurement_start_locked(void)
+static bool measurement_start_locked(measurement_refuse_reason_t *out_reason)
 {
     if (g_app.measurement_running)
+    {
+        if (out_reason)
+            *out_reason = MEASUREMENT_REFUSE_ALREADY_RUNNING;
         return false;
+    }
 
     if (g_app.dynamic_load_active)
     {
         ESP_LOGW(TAG, "measurement_start_locked: refused, dynamic load screen is active");
+        if (out_reason)
+            *out_reason = MEASUREMENT_REFUSE_DYNAMIC_LOAD_ACTIVE;
         return false;
     }
 
@@ -175,6 +207,8 @@ static bool measurement_start_locked(void)
     {
         ESP_LOGW(TAG, "measurement_start_locked: refused REAL mode, hardware not ready (ina_ready=%d pwm_ready=%d)",
                  g_app.ina_ready, g_app.pwm_ready);
+        if (out_reason)
+            *out_reason = MEASUREMENT_REFUSE_SENSOR_NOT_READY;
         return false;
     }
 

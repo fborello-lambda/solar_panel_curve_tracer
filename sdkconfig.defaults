@@ -9,3 +9,8 @@ CONFIG_PARTITION_TABLE_OFFSET=0xD000
 # Shared by both build variants. Secure Boot V2 config for the maintainer's
 # one fused board lives in sdkconfig.secure, layered on top of this file.
 CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+# Trim unused network features to keep the signed secure-boot image under
+# its 64 KB padding step: the soft-AP is IPv4 only (192.168.4.1) and the
+# optional STA link doesn't need WPA3.
+CONFIG_LWIP_IPV6=n
+CONFIG_ESP_WIFI_ENABLE_WPA3_SAE=n

@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Quick Guide</title>
+  <style>
+    :root {
+      --bg: #fcfcfb;
+      --card: #fcfcfb;
+      --border: #e4e4e7;
+      --fg: #171717;
+      --muted: #71717a;
+      --primary-bg: #262626;
+      --primary-fg: #fafafa;
+      --secondary-bg: #f4f4f5;
+      --secondary-fg: #262626;
+      --destructive: #dc2626;
+      --radius: 0.625rem;
+      --chart-i: #D97706;
+      --chart-p: #7C3AED;
+      --chart-mpp: #0891B2;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #0b0f1a;
+        --card: #11141f;
+        --border: rgba(255, 255, 255, 0.10);
+        --fg: #f1f3f9;
+        --muted: #c7ccd6;
+        --primary-bg: #e5e5e5;
+        --primary-fg: #262626;
+        --secondary-bg: #2a2d36;
+        --secondary-fg: #fafafa;
+        --destructive: #f87171;
+      }
+    }
+
+    :root[data-theme="dark"] {
+      --bg: #0b0f1a;
+      --card: #11141f;
+      --border: rgba(255, 255, 255, 0.10);
+      --fg: #f1f3f9;
+      --muted: #c7ccd6;
+      --primary-bg: #e5e5e5;
+      --primary-fg: #262626;
+      --secondary-bg: #2a2d36;
+      --secondary-fg: #fafafa;
+      --destructive: #f87171;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 16px 16px calc(24px + env(safe-area-inset-bottom));
+      line-height: 1.5;
+      background: var(--bg);
+      color: var(--fg);
+      min-height: 100vh;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+
+    h2 { margin: 0; font-size: 1.1rem; }
+    h3 { margin: 18px 0 6px; font-size: 1rem; }
+
+    .header-right { display: flex; gap: 8px; }
+
+    .icon-btn {
+      width: 44px;
+      height: 44px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--secondary-bg);
+      color: var(--secondary-fg);
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+
+    .icon-btn svg { width: 18px; height: 18px; flex-shrink: 0; }
+
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      height: 44px;
+      padding: 0 14px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--secondary-bg);
+      color: var(--secondary-fg);
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
+    .lang-toggle {
+      display: inline-flex;
+      align-items: stretch;
+      height: 44px;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: var(--secondary-bg);
+      overflow: hidden;
+      flex: none;
+    }
+
+    .lang-opt {
+      font-family: inherit;
+      font-size: 0.8rem;
+      font-weight: 600;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 0 12px;
+      min-height: 44px;
+    }
+
+    .lang-opt[aria-pressed="true"] {
+      background: var(--primary-bg);
+      color: var(--primary-fg);
+    }
+
+    a { color: inherit; }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+
+    ul { margin: 6px 0; padding-left: 20px; }
+    ol { margin: 6px 0; padding-left: 20px; }
+
+    .trouble-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+
+    @media (min-width: 520px) {
+      .trouble-grid { grid-template-columns: 1fr 1fr; }
+    }
+
+    .trouble-item {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 8px 10px;
+      background: var(--secondary-bg);
+    }
+
+    .trouble-item .p { font-weight: 600; font-size: 0.88rem; }
+    .trouble-item .c { color: var(--muted); font-size: 0.82rem; margin-top: 2px; }
+
+    .svg-wrap { text-align: center; margin: 6px 0; }
+    .svg-wrap svg { max-width: 100%; height: auto; }
+
+    footer { text-align: center; margin-top: 8px; font-size: 0.85rem; }
+
+    code { font-size: 0.85em; }
+  </style>
+</head>
+
+<body>
+  <header>
+    <a href="/" class="back-link" data-i18n="guide_back">Back</a>
+    <h2 data-i18n="guide_title">Quick guide</h2>
+    <div class="header-right">
+      <div id="langToggle" class="lang-toggle" role="group" data-i18n-aria="toggle_lang">
+        <button type="button" class="lang-opt" data-lang="es" aria-pressed="false">ES</button>
+        <button type="button" class="lang-opt" data-lang="en" aria-pressed="false">EN</button>
+      </div>
+      <button id="themeToggle" class="icon-btn" type="button" data-i18n-aria="toggle_theme">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+          stroke-linejoin="round">
+          <circle cx="12" cy="12" r="4"></circle>
+          <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4">
+          </path>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="card">
+    <h3 data-i18n="guide_what_h">What it does</h3>
+    <p data-i18n="guide_what_p">This device measures and traces the I-V curve of a small solar panel.</p>
+    <div class="svg-wrap">
+      <svg viewBox="0 0 300 180" role="img" aria-label="Example I-V curve">
+        <line x1="30" y1="150" x2="290" y2="150" stroke="currentColor" stroke-opacity="0.4" />
+        <line x1="30" y1="10" x2="30" y2="150" stroke="currentColor" stroke-opacity="0.4" />
+        <path d="M30,40 C90,42 150,45 190,60 C220,75 235,110 245,150" fill="none" stroke="#D97706" stroke-width="2.5" />
+        <path d="M30,150 C90,120 150,60 190,45 C215,55 230,90 245,150" fill="none" stroke="#7C3AED" stroke-width="2.5" />
+        <circle cx="190" cy="55" r="4.5" fill="#0891B2" />
+        <text x="196" y="50" font-size="10" fill="#0891B2">MPP</text>
+        <text x="8" y="43" font-size="10" fill="#D97706">Isc</text>
+        <text x="240" y="145" font-size="10" fill="currentColor">Voc</text>
+        <text x="34" y="22" font-size="9" fill="#D97706">I</text>
+        <text x="34" y="162" font-size="9" fill="#7C3AED">P</text>
+      </svg>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 data-i18n="guide_safety_h">Safety</h3>
+    <ul>
+      <li data-i18n="guide_safety_1">MOSFET heats up during a sweep.</li>
+      <li data-i18n="guide_safety_2">Sweep aborts at 5 W.</li>
+      <li data-i18n="guide_safety_3">Load capped at ~780 mA.</li>
+      <li data-i18n="guide_safety_4">No power switch: unplug the battery.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3 data-i18n="guide_connect_h">Connecting the panel</h3>
+    <ol>
+      <li data-i18n="guide_connect_1">PV+</li>
+      <li data-i18n="guide_connect_2">PV-</li>
+      <li data-i18n="guide_connect_3">Power on</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h3 data-i18n="guide_oled_h">Measuring from the OLED</h3>
+    <ol>
+      <li data-i18n="guide_oled_1">MEASURE</li>
+      <li data-i18n="guide_oled_2">CURVE TRACER</li>
+      <li data-i18n="guide_oled_3">START TRACE</li>
+      <li data-i18n="guide_oled_4">Turn / press</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h3 data-i18n="guide_phone_h">Measuring from a phone</h3>
+    <ol>
+      <li data-i18n="guide_phone_1">Connect to ESP32_PLOT</li>
+      <li data-i18n="guide_phone_2">Open http://192.168.4.1</li>
+      <li data-i18n="guide_phone_3">Start / Stop</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h3 data-i18n="guide_sweep_h">What happens during a sweep</h3>
+    <ol>
+      <li data-i18n="guide_sweep_1">Voc probe</li>
+      <li data-i18n="guide_sweep_2">Auto-range</li>
+      <li data-i18n="guide_sweep_3">20 points at the knee</li>
+      <li data-i18n="guide_sweep_4">10-15 s</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h3 data-i18n="guide_read_h">Reading the result</h3>
+    <ul>
+      <li data-i18n="guide_read_1">Voc</li>
+      <li data-i18n="guide_read_2">Isc</li>
+      <li data-i18n="guide_read_3">MPP</li>
+      <li data-i18n="guide_read_4">Lab setup</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3 data-i18n="guide_tips_h">Tips</h3>
+    <ul>
+      <li data-i18n="guide_tips_1">Steady lighting</li>
+      <li data-i18n="guide_tips_2">Don't shade the panel</li>
+      <li data-i18n="guide_tips_3">Flicker averaged out</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3 data-i18n="guide_trouble_h">Troubleshooting</h3>
+    <div class="trouble-grid">
+      <div class="trouble-item"><div class="p" data-i18n="guide_trouble_1_p">No points</div><div class="c" data-i18n="guide_trouble_1_c">cause</div></div>
+      <div class="trouble-item"><div class="p" data-i18n="guide_trouble_2_p">Curve doesn't reach 0V</div><div class="c" data-i18n="guide_trouble_2_c">cause</div></div>
+      <div class="trouble-item"><div class="p" data-i18n="guide_trouble_3_p">Sweep stops early</div><div class="c" data-i18n="guide_trouble_3_c">cause</div></div>
+      <div class="trouble-item"><div class="p" data-i18n="guide_trouble_4_p">Page is empty</div><div class="c" data-i18n="guide_trouble_4_c">cause</div></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 data-i18n="guide_ota_h">Updating firmware</h3>
+    <ol>
+      <li data-i18n="guide_ota_1">Download app-standard.bin</li>
+      <li data-i18n="guide_ota_2">Join ESP32_PLOT</li>
+      <li data-i18n="guide_ota_3">Open /ota, upload, wait ~30s</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h3 data-i18n="guide_sleep_h">Deep sleep</h3>
+    <p data-i18n="guide_sleep_1">SYSTEM &gt; DEEP SLEEP</p>
+  </div>
+
+  <div class="card">
+    <h3 data-i18n="guide_online_h">Online guide</h3>
+    <p style="word-break:break-all;">https://github.com/fborello-lambda/solar_panel_curve_tracer/blob/main/docs/quick_guide.md</p>
+  </div>
+
+  <footer>
+    <a href="/" data-i18n="guide_back">Back</a>
+  </footer>
+
+  <script src="/i18n.js"></script>
+  <script>
+    (function () {
+      "use strict";
+      const THEME_KEY = "solar-theme";
+      function getStoredTheme() { try { return window.localStorage.getItem(THEME_KEY); } catch (e) { return null; } }
+      function setStoredTheme(v) { try { window.localStorage.setItem(THEME_KEY, v); } catch (e) { /* ignore */ } }
+      function systemPrefersDark() { try { return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches; } catch (e) { return false; } }
+      function applyTheme() {
+        const stored = getStoredTheme();
+        if (stored === "light") document.documentElement.setAttribute("data-theme", "light");
+        else if (stored === "dark") document.documentElement.setAttribute("data-theme", "dark");
+        else document.documentElement.removeAttribute("data-theme");
+      }
+      applyTheme();
+      const themeToggle = document.getElementById("themeToggle");
+      if (themeToggle) {
+        themeToggle.addEventListener("click", function () {
+          const stored = getStoredTheme();
+          const isDark = stored === "dark" || (!stored && systemPrefersDark());
+          setStoredTheme(isDark ? "light" : "dark");
+          applyTheme();
+        });
+      }
+
+      const i18n = window.i18n || { t: (k) => k, apply: () => {}, getLang: () => "en", setLang: () => {} };
+      const langToggle = document.getElementById("langToggle");
+      const langOpts = langToggle ? Array.from(langToggle.querySelectorAll(".lang-opt")) : [];
+      function updateLangBtn() {
+        const current = i18n.getLang();
+        langOpts.forEach(function (btn) {
+          btn.setAttribute("aria-pressed", btn.getAttribute("data-lang") === current ? "true" : "false");
+        });
+      }
+      langOpts.forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          i18n.setLang(btn.getAttribute("data-lang"));
+        });
+      });
+      window.addEventListener("i18n:change", updateLangBtn);
+      i18n.apply();
+      updateLangBtn();
+    })();
+  </script>
+</body>
+
+</html>

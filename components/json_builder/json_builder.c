@@ -1,5 +1,7 @@
 #include "json_builder.h"
 
+#include <string.h>
+
 size_t build_x_y_samples_json(char *buf, size_t cap,
                               const float *x_arr, const float *y_arr,
                               int max_samples, int count)
@@ -10,42 +12,38 @@ size_t build_x_y_samples_json(char *buf, size_t cap,
     if (count > max_samples)
         count = max_samples;
 
+    // Not even "[]" + NUL fits: leave the caller a valid empty string
+    // rather than any attempt at a JSON array.
+    if (cap < 3)
+    {
+        buf[0] = '\0';
+        return 0;
+    }
+
     size_t pos = 0;
     buf[pos++] = '[';
 
     int wrote = 0;
     for (int i = 0; i < count; ++i)
     {
-        // conservative remaining-space check
-        size_t rem = (pos < cap) ? (cap - pos) : 0;
-        if (rem < 24)
-        { // not enough room for another {"x":...,"y":...}
-            pos = cap - 1;
-            break;
-        }
-
-        int n = snprintf(buf + pos, rem, "%s{\"x\":%.3f,\"y\":%.3f}", (wrote ? "," : ""), x_arr[i], y_arr[i]);
+        char elem[48];
+        int n = snprintf(elem, sizeof(elem), "%s{\"x\":%.3f,\"y\":%.3f}",
+                          (wrote ? "," : ""), x_arr[i], y_arr[i]);
         if (n < 0)
             break;
-        if ((size_t)n >= rem)
-        {
-            pos = cap - 1;
+
+        // Only commit this element if it (plus the closing ']' and NUL)
+        // fits; otherwise stop here so the output never contains a
+        // truncated, invalid element.
+        if (pos + (size_t)n + 2 > cap)
             break;
-        }
+
+        memcpy(buf + pos, elem, (size_t)n);
         pos += (size_t)n;
         wrote++;
     }
 
-    if (pos < cap - 1)
-    {
-        buf[pos++] = ']';
-        buf[pos] = '\0';
-    }
-    else
-    {
-        buf[cap - 2] = ']';
-        buf[cap - 1] = '\0';
-        pos = cap - 1;
-    }
+    buf[pos++] = ']';
+    buf[pos] = '\0';
     return pos;
 }

@@ -24,6 +24,10 @@ void test_json_builder_zero_points(void);
 void test_json_builder_one_point(void);
 void test_json_builder_n_points(void);
 void test_json_builder_truncates_small_buffer(void);
+void test_json_builder_cap_fits_zero_elements(void);
+void test_json_builder_cap_fits_one_element(void);
+void test_json_builder_cap_fits_two_elements(void);
+void test_json_builder_cap_too_small_for_brackets(void);
 
 void app_main(void)
 {
@@ -45,6 +49,10 @@ void app_main(void)
     RUN_TEST(test_json_builder_one_point);
     RUN_TEST(test_json_builder_n_points);
     RUN_TEST(test_json_builder_truncates_small_buffer);
+    RUN_TEST(test_json_builder_cap_fits_zero_elements);
+    RUN_TEST(test_json_builder_cap_fits_one_element);
+    RUN_TEST(test_json_builder_cap_fits_two_elements);
+    RUN_TEST(test_json_builder_cap_too_small_for_brackets);
 
     int failures = UNITY_END();
 

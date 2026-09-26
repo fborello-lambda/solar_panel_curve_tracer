@@ -28,6 +28,7 @@ typedef enum
     UI_QR_AP_IP,
     UI_QR_OTA,
     UI_QR_GUIDE,
+    UI_QR_REPO,
 } ui_qr_kind_t;
 
 typedef enum

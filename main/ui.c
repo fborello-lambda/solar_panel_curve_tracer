@@ -61,12 +61,12 @@ static const char *ui_home_title(int index)
     return titles[i];
 }
 
-#define UI_MENU_MAX_ITEMS 4
+#define UI_MENU_MAX_ITEMS 5
 
 static const char *const s_menu_items[HOME_SECTION_COUNT][UI_MENU_MAX_ITEMS] = {
-    [HOME_SECTION_NETWORK] = {"SHOW WIFI QR", "SHOW AP IP QR", "SHOW GUIDE QR", "BACK"},
-    [HOME_SECTION_MEASURE] = {"CURVE TRACER", "DYNAMIC LOAD", "BACK", NULL},
-    [HOME_SECTION_SYSTEM] = {"OTA", "RESET", "DEEP SLEEP", "BACK"},
+    [HOME_SECTION_NETWORK] = {"SHOW WIFI QR", "SHOW AP IP QR", "SHOW GUIDE QR", "SHOW REPO QR", "BACK"},
+    [HOME_SECTION_MEASURE] = {"CURVE TRACER", "DYNAMIC LOAD", "BACK", NULL, NULL},
+    [HOME_SECTION_SYSTEM] = {"OTA", "RESET", "DEEP SLEEP", "BACK", NULL},
 };
 
 static const char *ui_menu_item_label(int home_index, int menu_index)
@@ -214,9 +214,13 @@ void ui_on_button(void)
             {
                 g_app.ui_qr_kind = UI_QR_AP_IP;
             }
-            else
+            else if (g_app.ui_menu_index == 2)
             {
                 g_app.ui_qr_kind = UI_QR_GUIDE;
+            }
+            else
+            {
+                g_app.ui_qr_kind = UI_QR_REPO;
             }
             ui_set_screen(UI_SCREEN_ACTION_QR);
             return;
@@ -403,10 +407,16 @@ static void draw_real_qr_to_fb(uint8_t *fb, const char *payload)
         .quiet_zone = 2,
     };
 
+    // Version cap raised from 2 to 6: the repo-guide QR payload is an
+    // ~89-char GitHub URL, which needs QR version 5 at ECC LOW (max 106
+    // bytes) to encode; version 2 (32 bytes max) only fit the short
+    // http://192.168.4.1/... payloads used elsewhere. The renderer below
+    // (qr_draw_to_oled_cb) already auto-shrinks cell_px down to fit
+    // SH1106_HEIGHT, so shorter payloads still render exactly as before.
     esp_qrcode_config_t cfg = ESP_QRCODE_CONFIG_DEFAULT();
     cfg.display_func_with_cb = qr_draw_to_oled_cb;
     cfg.user_data = &ctx;
-    cfg.max_qrcode_version = 2;
+    cfg.max_qrcode_version = 6;
     cfg.qrcode_ecc_level = ESP_QRCODE_ECC_LOW;
 
     if (esp_qrcode_generate(&cfg, payload) != ESP_OK)
@@ -449,6 +459,7 @@ void ui_render_display_frame(uint8_t *fb)
         char line1[24] = {0};
         char line2[24] = {0};
         char line3[24] = {0};
+        char line4[24] = {0};
         int item_count = ui_menu_item_count(g_app.ui_home_index);
 
         snprintf(line0, sizeof(line0), "%s %s",
@@ -469,12 +480,23 @@ void ui_render_display_frame(uint8_t *fb)
                      g_app.ui_menu_index == 3 ? ">>" : "  ",
                      ui_menu_item_label(g_app.ui_home_index, 3));
         }
+        if (item_count > 4)
+        {
+            snprintf(line4, sizeof(line4), "%s %s",
+                     g_app.ui_menu_index == 4 ? ">>" : "  ",
+                     ui_menu_item_label(g_app.ui_home_index, 4));
+        }
 
-        int section_y = (item_count > 3) ? 16 : 18;
-        int line0_y = (item_count > 3) ? 24 : 30;
-        int line1_y = (item_count > 3) ? 34 : 42;
-        int line2_y = (item_count > 3) ? 44 : 54;
-        int line3_y = 56;
+        int section_y = (item_count > 4) ? 10 : (item_count > 3) ? 16
+                                                                  : 18;
+        int line0_y = (item_count > 4) ? 20 : (item_count > 3) ? 24
+                                                                : 30;
+        int line1_y = (item_count > 4) ? 28 : (item_count > 3) ? 34
+                                                                : 42;
+        int line2_y = (item_count > 4) ? 36 : (item_count > 3) ? 44
+                                                                : 54;
+        int line3_y = (item_count > 4) ? 44 : 56;
+        int line4_y = 52;
 
         sh1106_fb_draw_text(fb, 0, 8, "MENU");
         sh1106_fb_draw_text(fb, 0, section_y, ui_home_title(g_app.ui_home_index));
@@ -488,6 +510,10 @@ void ui_render_display_frame(uint8_t *fb)
         {
             sh1106_fb_draw_text(fb, 0, line3_y, line3);
         }
+        if (item_count > 4)
+        {
+            sh1106_fb_draw_text(fb, 0, line4_y, line4);
+        }
         return;
     }
 
@@ -500,6 +526,8 @@ void ui_render_display_frame(uint8_t *fb)
             payload = "http://192.168.4.1/ota";
         else if (g_app.ui_qr_kind == UI_QR_GUIDE)
             payload = "http://192.168.4.1/guide";
+        else if (g_app.ui_qr_kind == UI_QR_REPO)
+            payload = "https://github.com/fborello-lambda/solar_panel_curve_tracer/blob/main/docs/quick_guide.md";
         else
             payload = g_app.wifi_qr_payload;
         draw_real_qr_to_fb(fb, payload);
