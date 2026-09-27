@@ -28,6 +28,11 @@ static const char *TAG = "DEBUG";
 //   dyn on|off|up|down  drive the dynamic load screen (logs DYN,... lines)
 static void ina_update_config(uint16_t mask, uint16_t bits)
 {
+    if (g_app.measurement_running || g_app.dynamic_load_active)
+    {
+        ESP_LOGW(TAG, "gain/avg: refused, a sweep or the dynamic load is using the INA219");
+        return;
+    }
     uint16_t cfg = 0;
     if (ina219_read_register(g_app.ina_dev, INA219_REG_CONFIG, &cfg) != ESP_OK)
     {
