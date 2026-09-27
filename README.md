@@ -54,8 +54,10 @@ commanded load current until the panel collapses, locating the knee of the curve
 operator dialling in a current range. From there, an adaptive stepper places the 20 recorded
 points by normalized arc length along the curve (voltage and current each scaled 0..1), so the
 steep part near Voc, the knee, and the flat part near Isc all get points regardless of the
-panel's actual Isc (a few mA up to the load's cap). Zero-current offset from the current sensor
-is measured at the Voc probe and subtracted from every point in the sweep.
+panel's actual Isc (a few mA up to the load's cap). At the Voc probe (duty 0, no load) the
+current sensor's reading is pure error, proportional to the panel voltage (see
+[LESSONS.md](LESSONS.md)); it is measured there and subtracted from every point, so readings match a
+multimeter to about 1 mA.
 
 ## Build from source
 

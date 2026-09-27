@@ -31,6 +31,26 @@ bench.
 **Next revision:** tie C1, C2 and R8 to GND, and run a DRC/ERC check for
 unconnected pins before ordering.
 
+## INA219 input filter with a 10 mOhm shunt reads phantom current
+
+The INA219 datasheet suggests optional 10 Ohm resistors in series with VIN+/VIN- (R14/R15 here). The chip
+measures the bus voltage through VIN-, and that input draws a current proportional to the voltage (about
+3 uA/V); across the 10 Ohm resistor it shows up as shunt voltage, about 30 uV/V. With the datasheet's
+typical 0.1 Ohm shunt at amps this is negligible, but rev1 uses a 10 mOhm shunt (R12) and the target panels
+run at 40-70 mA, where the real shunt voltage is only 0.4-0.7 mV: the error is about 3 mA per volt, ~65 mA
+on a 21 V panel. The first auto-range sweep read that as load current, computed the knee from it, and put
+every point at the knee.
+
+Found by comparing against a bench supply in current limit (72 mA confirmed with a multimeter): the board
+read up to 108 mA while the supply could not deliver more than 72 mA. The firmware now measures the error
+at duty 0 (no load) at the start of every sweep and subtracts `err * V`; afterwards sweep and dynamic load
+match the supply limit to about 1 mA. The error drifts slowly between runs (~2 mA over minutes) but not
+within a sweep. The INA219 PGA setting does not help: the shunt register step is 10 uV (1 mA) at every
+range.
+
+**Next revision:** use 1 Ohm (or 0 Ohm) filter resistors, and/or a 0.1 Ohm shunt sized for the use case
+(10x finer steps, still ~3 A range), then retune the firmware calibration.
+
 ## Secure Boot
 
 Secure Boot on ESP32 burns the public key digest into eFuses permanently. Once enabled it cannot be disabled, and flashing any firmware signed with a different key will cause the device to boot-loop and become unrecoverable. Losing the private signing key bricks the device.

@@ -108,9 +108,28 @@ Partition table offset: `0xD000` (pushed up to fit the secure-boot-signed bootlo
   along the curve (V/Voc, I/Isc), estimating the local slope and measured current gain from the last two points so
   the steep part near Voc, the knee, and the flat part near Isc all get points for any Isc, from a few mA up to the
   duty cap. Duty only ever steps up (the RC input filter drains slowly, so a descending step reads stale current).
-  The INA219's zero-current offset is measured at the Voc probe (duty 0, where the load draws nothing) and
-  subtracted from every reading in that sweep. The sweep hard-stops (aborts, keeping points already recorded) if
+  At the Voc probe (duty 0, where the load draws nothing) the INA219 still reads a current proportional to the bus
+  voltage (~3 mA/V on rev1, see LESSONS.md); that error per volt is measured there and `err * V` is subtracted from
+  every reading in the sweep. The dynamic load screen applies the same correction, recalibrating whenever the load
+  has been at 0 for 500 ms, and averages over the same 100 ms window. The sweep hard-stops (aborts, keeping points already recorded) if
   measured power reaches the shared 5000 mW power cap.
+
+---
+
+## Bench debugging (USB serial console)
+
+With the board on USB, send line commands to the serial port (115200 baud):
+
+| Command | Effect |
+| --- | --- |
+| `sweep` / `stop` | Start / stop a REAL sweep |
+| `scan <max_duty> <step>` | Fixed-step load scan, no calibration |
+| `dyn on\|up\|down\|off` | Drive the dynamic load |
+| `raw <duty> <n>` | n single shunt register reads at a held duty |
+| `gain <1\|2\|4\|8>`, `avg <n>` | INA219 PGA and hardware averaging (bench experiments) |
+
+Every sweep/scan point logs `CSV,duty,bus_mV,shunt_uV,raw_mA,corrected_mA`; dynamic load logs
+`DYN,duty,bus_mV,raw_mA,corrected_mA`.
 
 ---
 
