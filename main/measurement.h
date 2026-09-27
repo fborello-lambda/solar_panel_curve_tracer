@@ -41,6 +41,13 @@ bool measurement_init_load_control_hw(void);
  */
 bool measurement_raw_scan(uint32_t max_duty, uint32_t step);
 
+/**
+ * @brief Averaged INA219 reading over the sweep's 100 ms window at the
+ * current load, without the zero-load correction: bus voltage in mV and
+ * raw shunt current in mA. Used by the dynamic load screen.
+ */
+bool measurement_sample(float *out_bus_mV, float *out_raw_mA);
+
 void measurement_set_producer_mode(curve_producer_mode_t mode);
 curve_producer_mode_t measurement_get_producer_mode(void);
 const char *measurement_get_producer_mode_label(void);

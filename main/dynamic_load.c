@@ -13,6 +13,7 @@
 #include "app/app_tasks.h"
 
 #include "driver_ina219.h"
+#include "measurement.h"
 #include "pwm_controller.h"
 
 static const char *TAG = "DYNLOAD";
@@ -83,44 +84,28 @@ void dynamic_load_update_measured(void)
 
     g_app.dynamic_last_sample_tick = now;
 
-    int32_t sum_mA = 0;
-    int32_t sum_bus_mv = 0;
-    int32_t sum_shunt_uv = 0;
-    int valid = 0;
-    for (int n = 0; n < DYNAMIC_LOAD_SAMPLE_COUNT; n++)
+    float avg_bus_mV = 0.0f, raw_mA = 0.0f;
+    if (measurement_sample(&avg_bus_mV, &raw_mA))
     {
-        int32_t raw_mA = 0, bus_mv = 0, shunt_uv = 0;
-        bool ok = ina219_get_current_ma(g_app.ina_dev, &g_app.ina_cal, &raw_mA) == ESP_OK;
-        ok &= ina219_get_bus_voltage_mv(g_app.ina_dev, &bus_mv) == ESP_OK;
-        ok &= ina219_get_shunt_voltage_uv(g_app.ina_dev, &shunt_uv) == ESP_OK;
-        if (ok)
-        {
-            sum_mA += raw_mA;
-            sum_bus_mv += bus_mv;
-            sum_shunt_uv += shunt_uv;
-            valid++;
-        }
-        vTaskDelay(pdMS_TO_TICKS(2));
-    }
+        // Same zero-load correction as the sweep (see auto_range in
+        // measurement.c): at duty 0 nothing flows, so the reading is the
+        // INA219's voltage-proportional error; recalibrate it there and
+        // subtract err * V from every reading.
+        // Only once the load has been at 0 long enough for the RC filter to
+        // drain, otherwise a still-flowing current is mistaken for error.
+        if (g_app.dynamic_duty_steps == 0 && avg_bus_mV >= 500.0f &&
+            (now - g_app.dynamic_last_adjust_tick) >= pdMS_TO_TICKS(DYNAMIC_LOAD_ZERO_CAL_SETTLE_MS))
+            g_app.ina_err_mA_per_V = raw_mA / (avg_bus_mV / 1000.0f);
+        float i_mA = raw_mA - g_app.ina_err_mA_per_V * (avg_bus_mV / 1000.0f);
 
-    if (valid > 0)
-    {
-        float avg_signed_mA = (float)sum_mA / (float)valid;
-        float avg_bus_mV = (float)sum_bus_mv / (float)valid;
-
-        // At duty 0 nothing flows, so what the INA219 reads is its
-        // voltage-proportional error (see auto_range in measurement.c):
-        // recalibrate it here and subtract err * V from every reading.
-        if (g_app.dynamic_duty_steps == 0 && avg_bus_mV >= 500.0f)
-            g_app.ina_err_mA_per_V = avg_signed_mA / (avg_bus_mV / 1000.0f);
-        avg_signed_mA -= g_app.ina_err_mA_per_V * (avg_bus_mV / 1000.0f);
-        float avg_mA = fabsf(avg_signed_mA);
-
-        g_app.dynamic_measured_mA = (avg_mA < 3.0f) ? 0.0f : avg_mA;
-        g_app.dynamic_bus_mv = sum_bus_mv / valid;
-        g_app.dynamic_shunt_uv = sum_shunt_uv / valid;
+        g_app.dynamic_measured_mA = (i_mA > 0.0f) ? i_mA : 0.0f;
+        g_app.dynamic_bus_mv = (int32_t)avg_bus_mV;
         g_app.dynamic_power_mW = (g_app.dynamic_measured_mA * avg_bus_mV) / 1000.0f;
         g_app.dynamic_measured_valid = true;
+        // Machine-readable dump for debugging over USB serial:
+        // DYN,duty,bus_mV,raw_mA,corrected_mA
+        ESP_LOGI(TAG, "DYN,%lu,%.1f,%.3f,%.3f", (unsigned long)g_app.dynamic_duty_steps,
+                 (double)avg_bus_mV, (double)raw_mA, (double)g_app.dynamic_measured_mA);
 
         if (g_app.dynamic_power_mW >= LOAD_POWER_LIMIT_MW)
         {

@@ -295,22 +295,13 @@ static bool sleep_chunked_checking_stop(uint32_t ms)
     return g_app.measurement_stop_requested;
 }
 
-// Commands `duty_steps`, settles for `settle_ms`, then averages bus/shunt
-// voltage readings over a fixed SWEEP_SAMPLE_WINDOW_MS window (sampled as
-// fast as I2C allows) — 100 ms spans an integer number of half-cycles of
-// both 50 Hz and 60 Hz mains flicker, so ripple from a lamp cancels out.
-// Used by both auto-range probes and recorded sweep points.
-// `err_mA_per_V` is the INA219 current-reading error per volt of bus
-// voltage (measured by auto_range()); `err_mA_per_V * V` is subtracted
-// from every reading. Pass 0 when it isn't known yet (the Voc probe).
-static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms, float err_mA_per_V,
-                                       float *out_v, float *out_i_mA, float *out_power_mW)
+// Averages bus/shunt voltage readings over SWEEP_SAMPLE_WINDOW_MS, sampled
+// as fast as I2C allows. 100 ms spans an integer number of half-cycles of
+// both 50 Hz and 60 Hz mains flicker, so ripple from a lamp cancels out,
+// and the sensor noise dithers the 10 uV (1 mA) steps down to ~0.1-0.2 mA.
+// Returns false if no read succeeded (or, when `stoppable`, on a stop request).
+static bool sample_window(bool stoppable, float *out_bus_mV, float *out_shunt_uV)
 {
-    pwm_controller_set_duty_in_res_steps(duty_steps);
-
-    if (sleep_chunked_checking_stop(settle_ms))
-        return MEASURE_STOP_REQUESTED;
-
     int64_t bus_mV_sum = 0;
     int64_t shunt_uV_sum = 0;
     int valid = 0;
@@ -318,8 +309,8 @@ static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms, f
     int64_t window_start = esp_timer_get_time();
     while ((esp_timer_get_time() - window_start) < (int64_t)SWEEP_SAMPLE_WINDOW_MS * 1000)
     {
-        if (g_app.measurement_stop_requested)
-            break;
+        if (stoppable && g_app.measurement_stop_requested)
+            return false;
 
         int32_t bus_mV = 0, shunt_uV = 0;
         bool ok = ina219_get_bus_voltage_mv(g_app.ina_dev, &bus_mV) == ESP_OK;
@@ -332,14 +323,46 @@ static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms, f
         }
     }
 
+    if (valid == 0)
+        return false;
+    *out_bus_mV = (float)bus_mV_sum / (float)valid;
+    *out_shunt_uV = (float)shunt_uV_sum / (float)valid;
+    return true;
+}
+
+bool measurement_sample(float *out_bus_mV, float *out_raw_mA)
+{
+    float bus_mV = 0.0f, shunt_uV = 0.0f;
+    if (!g_app.ina_ready || !sample_window(false, &bus_mV, &shunt_uV))
+        return false;
+    int shunt_mOhm = g_app.ina_cal.shunt_resistor_mOhm;
+    *out_bus_mV = bus_mV;
+    *out_raw_mA = (shunt_mOhm > 0) ? (shunt_uV / (float)shunt_mOhm) : 0.0f;
+    return true;
+}
+
+// Commands `duty_steps`, settles for `settle_ms`, then averages one
+// sample_window(). Used by both auto-range probes and recorded sweep points.
+// `err_mA_per_V` is the INA219 current-reading error per volt of bus
+// voltage (measured by auto_range()); `err_mA_per_V * V` is subtracted
+// from every reading. Pass 0 when it isn't known yet (the Voc probe).
+static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms, float err_mA_per_V,
+                                       float *out_v, float *out_i_mA, float *out_power_mW)
+{
+    pwm_controller_set_duty_in_res_steps(duty_steps);
+
+    if (sleep_chunked_checking_stop(settle_ms))
+        return MEASURE_STOP_REQUESTED;
+
+    float bus_mV = 0.0f, shunt_uV = 0.0f;
+    bool got = sample_window(true, &bus_mV, &shunt_uV);
+
     if (g_app.measurement_stop_requested)
         return MEASURE_STOP_REQUESTED;
 
-    if (valid == 0)
+    if (!got)
         return MEASURE_NO_VALID_READS;
 
-    float bus_mV = (float)bus_mV_sum / (float)valid;
-    float shunt_uV = (float)shunt_uV_sum / (float)valid;
     int shunt_mOhm = g_app.ina_cal.shunt_resistor_mOhm;
     float current_mA = (shunt_mOhm > 0) ? (shunt_uV / (float)shunt_mOhm) : 0.0f;
     float raw_mA = current_mA;
