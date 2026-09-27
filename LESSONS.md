@@ -51,22 +51,16 @@ range.
 **Next revision:** use 1 Ohm (or 0 Ohm) filter resistors, and/or a 0.1 Ohm shunt sized for the use case
 (10x finer steps, still ~3 A range), then retune the firmware calibration.
 
-**Why the INA229 (used in the sibling mpp_sdk board) avoids it:** the filter wiring is identical there
-(10 Ohm in series with IN+ and IN-, a capacitor across, 10 mOhm shunt). The difference is where the
-chip measures the bus voltage:
+**INA229 comparison (mpp_sdk board):** same filter wiring, but the INA229 reads bus voltage on a
+separate VBUS pin wired straight to VIN, so the bus input current never crosses the 10 Ohm resistors.
 
-| | INA219 (this board) | INA229 (mpp_sdk) |
+| | INA219 | INA229 |
 | --- | --- | --- |
-| Bus voltage input | IN- itself (no separate pin) | dedicated VBUS pin |
-| Bus input path | through the 10 Ohm filter (R15) | straight to the VIN net, no resistor |
-| Current through the filter | bus input current, ~3 uA/V | only the IN+/IN- input currents |
-| Resulting phantom current | ~3 mA per volt | none from the bus path |
-| Shunt resolution (10 mOhm) | 10 uV = 1 mA | 312.5 nV = ~31 uA (20-bit) |
+| Bus voltage input | IN- (through the filter) | VBUS (no filter) |
+| Phantom current | ~3 mA/V | none from the bus path |
+| Resolution, 10 mOhm | 1 mA | ~31 uA |
 
-The rule behind both: every uA pulled through a 10 Ohm filter resistor reads as 1 mA on a 10 mOhm
-shunt. With a separate VBUS pin the large bus-measurement current never crosses the filter, so only
-the chip's small IN+/IN- currents are left. That is small but not proven zero: check any board by
-reading the current at duty 0 with a few different input voltages; it should stay at ~0 mA.
+Rule: every uA through a 10 Ohm filter reads as 1 mA on a 10 mOhm shunt.
 
 ## Secure Boot
 
