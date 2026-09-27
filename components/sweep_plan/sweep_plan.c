@@ -135,7 +135,18 @@ void sweep_adapt_begin(sweep_adapt_t *a, float voc_mV, float isc_mA,
     a->prev_i_mA = 0.0f;
     a->have_prev = false;
 
+    a->refine_count = 0;
+    a->refine_active = false;
+    a->discard_last = false;
+    a->refine_step = 0;
+    a->refine_end = 0;
+
     a->done = false;
+}
+
+bool sweep_adapt_last_discarded(const sweep_adapt_t *a)
+{
+    return a->discard_last;
 }
 
 uint32_t sweep_adapt_next(sweep_adapt_t *a, float v_mV, float i_mA)
@@ -145,10 +156,51 @@ uint32_t sweep_adapt_next(sweep_adapt_t *a, float v_mV, float i_mA)
 
     uint32_t duty = a->next_duty;
     a->points_done++;
+    a->discard_last = false;
+
+    float ds = SWEEP_ADAPT_TARGET_ARC / (float)(a->n_points - 1);
+    bool collapsed = duty > 0 && v_mV <= a->collapse_mV;
+
+    // A panel with a sharp knee can fall from Vmp to ~0 V within a couple of
+    // duty steps, so a step can jump most of the way over the knee. If the
+    // step just taken is much longer than the target arc and there is duty
+    // room below it, drop this point and re-sweep that gap in small fixed
+    // steps (from duty 0 again, since duty only ever steps up).
+    if (!a->refine_active && a->refine_count < SWEEP_ADAPT_REFINE_MAX && a->have_prev &&
+        duty >= a->prev_duty + 2 && a->n_points - a->points_done >= 2)
+    {
+        float gdv = (a->prev_v_mV - v_mV) / a->voc_mV;
+        float gdi = (i_mA - a->prev_i_mA) / a->isc_mA;
+        if (sqrtf(gdv * gdv + gdi * gdi) > SWEEP_ADAPT_REFINE_GAP * ds)
+        {
+            a->refine_count++;
+            a->refine_active = true;
+            a->discard_last = true;
+            a->points_done--;
+
+            size_t slots = a->n_points - a->points_done - 1; // keep one for the gap's end
+            if (slots > SWEEP_ADAPT_REFINE_POINTS)
+                slots = SWEEP_ADAPT_REFINE_POINTS;
+            // Ceil, so the re-sweep reaches refine_end within its slots and
+            // the rest of the budget still gets the curve to the collapse.
+            uint32_t span = duty - a->prev_duty;
+            uint32_t step = (span + (uint32_t)slots) / (uint32_t)(slots + 1);
+            a->refine_step = step > 0 ? step : 1;
+            a->refine_end = duty;
+
+            uint32_t next = a->prev_duty + a->refine_step;
+            if (next > duty)
+                next = duty;
+            a->next_duty = next;
+            return next;
+        }
+    }
+    if (a->refine_active && duty >= a->refine_end)
+        a->refine_active = false;
 
     // Termination: collapsed (Isc reached, duty > 0 so the Voc point
     // itself never counts), duty cap reached, or point budget exhausted.
-    if ((duty > 0 && v_mV <= a->collapse_mV) || duty >= a->top || a->points_done >= a->n_points)
+    if (collapsed || duty >= a->top || a->points_done >= a->n_points)
     {
         a->done = true;
         return SWEEP_ADAPT_DONE;
@@ -187,7 +239,6 @@ uint32_t sweep_adapt_next(sweep_adapt_t *a, float v_mV, float i_mA)
         }
     }
 
-    float ds = SWEEP_ADAPT_TARGET_ARC / (float)(a->n_points - 1);
     float delta_i = ds / sqrtf(1.0f + slope * slope);
     float delta_duty = (delta_i * a->isc_mA) / gain;
     if (stalled)
@@ -215,6 +266,13 @@ uint32_t sweep_adapt_next(sweep_adapt_t *a, float v_mV, float i_mA)
     }
 
     uint32_t next_duty = duty + (uint32_t)delta_duty;
+    if (a->refine_active)
+    {
+        // Re-sweeping the knee: fixed small steps up to the known collapse.
+        next_duty = duty + a->refine_step;
+        if (next_duty > a->refine_end)
+            next_duty = a->refine_end;
+    }
     if (next_duty <= duty)
         next_duty = duty + 1;
     if (next_duty > a->top)

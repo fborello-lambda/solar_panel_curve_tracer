@@ -100,8 +100,18 @@ extern "C"
 #define SWEEP_ADAPT_JUMP_BUDGET_LEFT 2  // when this few points remain, jump toward top
 #define SWEEP_ADAPT_MIN_DUTY_STEP 1     // duty step floor
 #define SWEEP_ADAPT_DEADZONE_GROW 2.0f  // step multiplier when current gain looks stalled
+#define SWEEP_ADAPT_REFINE_GAP 2.0f     // re-sweep a gap if one step spans > this x the target arc
+#define SWEEP_ADAPT_REFINE_POINTS 6     // max extra points spent filling that gap
+#define SWEEP_ADAPT_REFINE_MAX 2        // at most this many re-sweeps per sweep (each costs a 1 s drain)
 
 #define SWEEP_ADAPT_DONE UINT32_MAX // sentinel returned by sweep_adapt_next() when finished
+
+    /**
+     * @brief True if the point just passed to sweep_adapt_next() must not be
+     * recorded: the sweep jumped straight into the collapse and will re-sweep
+     * the knee from below. The caller must bring the load back to duty 0 and
+     * let it settle (duty only ever steps up) before measuring the next duty.
+     */
 
     typedef struct
     {
@@ -120,6 +130,12 @@ extern "C"
         float prev_v_mV;
         float prev_i_mA;
         bool have_prev;
+
+        uint32_t refine_count; // knee gaps re-swept so far
+        bool refine_active;    // currently re-sweeping a gap in fixed steps
+        bool discard_last;  // the point just fed must not be recorded
+        uint32_t refine_step; // fixed duty step while re-sweeping the knee
+        uint32_t refine_end;  // collapsing duty found on the first pass
 
         bool done;
     } sweep_adapt_t;
@@ -144,6 +160,7 @@ extern "C"
      *         exhausted).
      */
     uint32_t sweep_adapt_next(sweep_adapt_t *a, float v_mV, float i_mA);
+    bool sweep_adapt_last_discarded(const sweep_adapt_t *a);
 
 #ifdef __cplusplus
 }

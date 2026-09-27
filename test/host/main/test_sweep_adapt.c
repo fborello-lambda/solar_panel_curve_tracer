@@ -26,6 +26,9 @@ static float jitter(uint32_t duty)
 // is responsible for subtracting it out before it ever reaches
 // sweep_adapt_next(); this simulation just exercises that the arc-length
 // stepper is not thrown off by the residual noise it leaves behind).
+// Knee sharpness of the simulated panel (logistic steepness around Isc).
+static double s_knee_sharpness = 8.0;
+
 static void panel_at_duty(float isc_mA, float deadzone_mA, uint32_t duty,
                            float *out_v_mV, float *out_i_mA)
 {
@@ -34,7 +37,7 @@ static void panel_at_duty(float isc_mA, float deadzone_mA, uint32_t duty,
         commanded_mA = 0.0;
 
     double overdrive = commanded_mA / (double)isc_mA;
-    double v = (double)VOC_MV / (1.0 + exp(8.0 * (overdrive - 1.0)));
+    double v = (double)VOC_MV / (1.0 + exp(s_knee_sharpness * (overdrive - 1.0)));
     double i = commanded_mA < isc_mA ? commanded_mA : isc_mA;
     i *= jitter(duty);
     i += INA_OFFSET_MA * 0.05; // small residual after offset correction
@@ -84,7 +87,7 @@ static sweep_result_t run_adapt(float isc_mA, float deadzone_mA)
     float v_mV, i_mA;
     panel_at_duty(isc_mA, deadzone_mA, duty, &v_mV, &i_mA);
 
-    for (int step = 0; step < N_POINTS; step++)
+    for (int iter = 0; iter < N_POINTS + SWEEP_ADAPT_REFINE_POINTS + 2 && res.count < N_POINTS; iter++)
     {
         res.duties[res.count] = duty;
         res.v_mV[res.count] = v_mV;
@@ -92,6 +95,17 @@ static sweep_result_t run_adapt(float isc_mA, float deadzone_mA)
         res.count++;
 
         uint32_t next = sweep_adapt_next(&a, v_mV, i_mA);
+
+        if (sweep_adapt_last_discarded(&a))
+        {
+            // Jumped over the knee: the point is dropped and the knee is
+            // re-swept from below (the caller drains the load at duty 0).
+            res.count--;
+            TEST_ASSERT_TRUE_MESSAGE(next > res.duties[res.count - 1], "re-sweep did not start above the last point");
+            duty = next;
+            panel_at_duty(isc_mA, deadzone_mA, duty, &v_mV, &i_mA);
+            continue;
+        }
 
         if (v_mV <= VOC_MV * SWEEP_ADAPT_COLLAPSE_PERCENT / 100.0f && duty > 0)
             res.reached_isc = true;
@@ -223,4 +237,26 @@ void test_sweep_adapt_prints_isc_50ma_and_5ma_tables(void)
         }
     }
     TEST_ASSERT_TRUE(true);
+}
+
+void test_sweep_adapt_resweeps_a_sharp_knee(void)
+{
+    // Real panel on the bench (Isc ~50 mA): V fell from ~17 V to ~0 V within
+    // two duty steps, so the first pass jumped straight over the knee. The
+    // stepper must drop that collapse point, re-sweep the gap from below and
+    // still end on the collapse with strictly increasing recorded duties.
+    s_knee_sharpness = 60.0;
+    sweep_result_t res = run_adapt(50.0f, 0.0f);
+    s_knee_sharpness = 8.0;
+
+    int knee_points = 0;
+    for (int k = 0; k < res.count; k++)
+    {
+        if (k > 0)
+            TEST_ASSERT_TRUE_MESSAGE(res.duties[k] > res.duties[k - 1], "recorded duties not strictly increasing");
+        if (res.v_mV[k] > 0.1f * VOC_MV && res.v_mV[k] < 0.9f * VOC_MV)
+            knee_points++;
+    }
+    TEST_ASSERT_TRUE_MESSAGE(res.reached_isc, "sharp-knee sweep did not end on the collapse");
+    TEST_ASSERT_TRUE_MESSAGE(knee_points >= 2, "no points on the sharp knee");
 }

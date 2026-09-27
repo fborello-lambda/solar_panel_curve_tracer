@@ -10,6 +10,7 @@ void test_sweep_adapt_reaches_isc_across_range(void);
 void test_sweep_adapt_no_large_normalized_gaps(void);
 void test_sweep_adapt_tiny_isc_terminates_within_budget(void);
 void test_sweep_adapt_prints_isc_50ma_and_5ma_tables(void);
+void test_sweep_adapt_resweeps_a_sharp_knee(void);
 
 // sweep_range state machine
 void test_sweep_range_probes_strictly_ascending_and_bounded(void);
@@ -44,6 +45,7 @@ void app_main(void)
     RUN_TEST(test_sweep_adapt_no_large_normalized_gaps);
     RUN_TEST(test_sweep_adapt_tiny_isc_terminates_within_budget);
     RUN_TEST(test_sweep_adapt_prints_isc_50ma_and_5ma_tables);
+    RUN_TEST(test_sweep_adapt_resweeps_a_sharp_knee);
 
     RUN_TEST(test_sweep_range_probes_strictly_ascending_and_bounded);
     RUN_TEST(test_sweep_range_knee_estimate_tracks_isc);

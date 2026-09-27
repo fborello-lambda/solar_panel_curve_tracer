@@ -186,9 +186,12 @@ static void measurement_apply_state_locked(bool running)
     app_display_mark_dirty();
 }
 
+// Set while a debug raw scan drives the load (see measurement_raw_scan).
+static volatile bool s_raw_scan_active = false;
+
 static bool measurement_start_locked(measurement_refuse_reason_t *out_reason)
 {
-    if (g_app.measurement_running)
+    if (g_app.measurement_running || s_raw_scan_active)
     {
         if (out_reason)
             *out_reason = MEASUREMENT_REFUSE_ALREADY_RUNNING;
@@ -540,7 +543,8 @@ static void producer_task(void *arg)
     sweep_adapt_begin(&adapt, voc_mV, isc_mA, knee, top, DB_MAX_SAMPLES);
 
     uint32_t duty = 0;
-    for (int step = 0; step < DB_MAX_SAMPLES; step++)
+    int step = 0; // recorded points
+    for (int iter = 0; iter < DB_MAX_SAMPLES + SWEEP_ADAPT_REFINE_POINTS + 2 && step < DB_MAX_SAMPLES; iter++)
     {
         if (g_app.measurement_stop_requested)
         {
@@ -576,6 +580,19 @@ static void producer_task(void *arg)
 
         uint32_t next_duty = sweep_adapt_next(&adapt, v * 1000.0f, i_mA);
 
+        if (sweep_adapt_last_discarded(&adapt))
+        {
+            // Jumped over a sharp knee: drain the RC filter at duty 0, then
+            // climb back into the gap (the next duty is below this one).
+            ESP_LOGI(TAG, "producer_task: collapse at duty %lu after a large jump, re-sweeping the knee from duty %lu",
+                     (unsigned long)duty, (unsigned long)next_duty);
+            pwm_controller_set_duty_in_res_steps(0);
+            if (sleep_chunked_checking_stop(SWEEP_FIRST_POINT_SETTLE_MS))
+                break;
+            duty = next_duty;
+            continue;
+        }
+
         if (!db_add(v, i_mA))
         {
             ESP_LOGW(TAG, "producer_task: db_add failed, dropping sample (v=%.3f,i=%.3f)", v, i_mA);
@@ -592,6 +609,7 @@ static void producer_task(void *arg)
             break;
         }
         duty = next_duty;
+        step++;
     }
 
     ESP_LOGI(TAG, "producer_task: Finished data production");
@@ -613,6 +631,7 @@ bool measurement_raw_scan(uint32_t max_duty, uint32_t step)
     if (step == 0)
         step = 1;
 
+    s_raw_scan_active = true;
     ESP_LOGI(TAG, "raw_scan: duty 0..%lu step %lu (CSV,duty,bus_mV,shunt_uV,raw_mA,corrected_mA)",
              (unsigned long)max_duty, (unsigned long)step);
     for (uint32_t duty = 0; duty <= max_duty; duty += step)
@@ -622,6 +641,7 @@ bool measurement_raw_scan(uint32_t max_duty, uint32_t step)
             break;
     }
     pwm_controller_set_duty_in_res_steps(0);
+    s_raw_scan_active = false;
     ESP_LOGI(TAG, "raw_scan: done");
     return true;
 }
