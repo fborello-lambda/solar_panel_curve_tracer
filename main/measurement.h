@@ -17,6 +17,18 @@ typedef enum
     MEASUREMENT_REFUSE_SENSOR_NOT_READY,
 } measurement_refuse_reason_t;
 
+typedef enum
+{
+    MEASUREMENT_FAULT_NONE = 0,
+    MEASUREMENT_FAULT_NO_PANEL, // open-circuit voltage below SWEEP_VOC_MIN_MV
+    MEASUREMENT_FAULT_NO_LOAD,  // commanding more load did not raise the current
+} measurement_fault_t;
+
+/** @brief Fault from the last REAL sweep (cleared when a new one starts). */
+measurement_fault_t measurement_last_fault(void);
+/** @brief "none", "no_panel" or "no_load", for the /status JSON. */
+const char *measurement_fault_str(measurement_fault_t fault);
+
 bool measurement_is_running(void);
 bool measurement_request(bool start);
 

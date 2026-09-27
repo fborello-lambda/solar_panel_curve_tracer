@@ -33,6 +33,8 @@ static const char *TAG = "MEASURE";
 #define SWEEP_SETTLE_MS 250              // settle time after a duty step before sampling
 #define SWEEP_FIRST_POINT_SETTLE_MS 1000 // longer settle for the true open-circuit point
 #define SWEEP_SAMPLE_WINDOW_MS 100       // averaging window, an integer number of 50/60 Hz half-cycles
+#define SWEEP_NO_LOAD_DUTY 64            // by this duty the load must draw current...
+#define SWEEP_NO_LOAD_MIN_MA 2.0f        // ...at least this much, or the load is broken
 #define SWEEP_STOP_POLL_MS 25            // chunk size for waits, so stop is honored quickly
 
 static curve_producer_mode_t s_producer_mode = CURVE_PRODUCER_REAL;
@@ -171,12 +173,37 @@ bool measurement_init_load_control_hw(void)
     return true;
 }
 
+static volatile measurement_fault_t s_last_fault = MEASUREMENT_FAULT_NONE;
+
+measurement_fault_t measurement_last_fault(void)
+{
+    return s_last_fault;
+}
+
+const char *measurement_fault_str(measurement_fault_t fault)
+{
+    switch (fault)
+    {
+    case MEASUREMENT_FAULT_NO_PANEL:
+        return "no_panel";
+    case MEASUREMENT_FAULT_NO_LOAD:
+        return "no_load";
+    default:
+        return "none";
+    }
+}
+
 static void measurement_apply_state_locked(bool running)
 {
     g_app.measurement_running = running;
     if (running)
     {
         led_set_color(WS2812_GPIO, (led_color_t){.r = 0, .g = 20, .b = 0});
+    }
+    else if (s_last_fault != MEASUREMENT_FAULT_NONE)
+    {
+        // Stays red until the next sweep starts.
+        led_set_color(WS2812_GPIO, (led_color_t){.r = 30, .g = 0, .b = 0});
     }
     else
     {
@@ -217,6 +244,7 @@ static bool measurement_start_locked(measurement_refuse_reason_t *out_reason)
 
     db_reset();
     g_app.measurement_stop_requested = false;
+    s_last_fault = MEASUREMENT_FAULT_NONE;
 
     TaskFunction_t producer_fn = (s_producer_mode == CURVE_PRODUCER_DUMMY) ? dummy_producer_task : producer_task;
     const char *producer_name = (s_producer_mode == CURVE_PRODUCER_DUMMY) ? "producer_demo" : "producer";
@@ -430,6 +458,7 @@ static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, 
     {
         ESP_LOGW(TAG, "auto_range: Voc %.0f mV below %d mV, no panel to sweep (dark, disconnected)",
                  voc_mV, SWEEP_VOC_MIN_MV);
+        s_last_fault = MEASUREMENT_FAULT_NO_PANEL;
         return false;
     }
 
@@ -446,6 +475,18 @@ static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, 
 
         float v_mV = v * 1000.0f;
         ESP_LOGI(TAG, "auto_range: probe duty=%lu -> V=%.0f mV I=%.1f mA", (unsigned long)sr.duty, v_mV, i_mA);
+
+        // The load commands ~0.48 mA per duty step, so by SWEEP_NO_LOAD_DUTY
+        // the current must have risen unless the panel already collapsed.
+        // If it hasn't, the load circuit (op-amp, MOSFET, wiring) isn't
+        // drawing anything and the sweep would only record Voc.
+        if (sr.duty >= SWEEP_NO_LOAD_DUTY && i_mA < SWEEP_NO_LOAD_MIN_MA && v_mV > 0.5f * voc_mV)
+        {
+            ESP_LOGW(TAG, "auto_range: %.1f mA at duty %lu with the panel still at %.0f mV, load not responding",
+                     i_mA, (unsigned long)sr.duty, v_mV);
+            s_last_fault = MEASUREMENT_FAULT_NO_LOAD;
+            return false;
+        }
 
         if (sweep_range_on_probe(&sr, v_mV, i_mA))
             break;
