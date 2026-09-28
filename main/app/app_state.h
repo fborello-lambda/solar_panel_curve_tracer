@@ -68,6 +68,7 @@ typedef struct
     int32_t dynamic_bus_mv;
     int32_t dynamic_shunt_uv;
     bool dynamic_measured_valid;
+    float ina_err_mA_per_V; // INA219 current error per bus volt, measured at zero load (see auto_range)
     bool dynamic_power_limited;
     uint32_t dynamic_duty_steps;
     TickType_t dynamic_last_adjust_tick;
@@ -95,9 +96,9 @@ extern app_state_t g_app;
 #define ENC_SW_GPIO GPIO_NUM_4
 #define DYNAMIC_LOAD_DUTY_STEP 96
 #define DYNAMIC_LOAD_DUTY_MAX_PERCENT 10
-#define DYNAMIC_LOAD_SAMPLE_COUNT 8
 #define DYNAMIC_LOAD_UPDATE_MS 120
 #define DYNAMIC_LOAD_SETTLE_MS 80
+#define DYNAMIC_LOAD_ZERO_CAL_SETTLE_MS 500
 #define LOAD_POWER_LIMIT_MW 5000.0f
 #define LOAD_POWER_NEAR_MARGIN_MW 150.0f
 #define OLED_IDLE_TIMEOUT_S 60

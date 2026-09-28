@@ -177,14 +177,15 @@ static esp_err_t status_get_handler(httpd_req_t *req)
 
     const esp_app_desc_t *desc = esp_app_get_description();
 
-    char out[192];
+    char out[224];
     int n = snprintf(out, sizeof(out),
-                      "{\"running\":%s,\"mode\":\"%s\",\"ina_ready\":%s,\"points\":%zu,\"version\":\"%s\"}",
+                      "{\"running\":%s,\"mode\":\"%s\",\"ina_ready\":%s,\"points\":%zu,\"version\":\"%s\",\"fault\":\"%s\"}",
                       measurement_is_running() ? "true" : "false",
                       measurement_get_producer_mode_label(),
                       g_app.ina_ready ? "true" : "false",
                       count,
-                      desc->version);
+                      desc->version,
+                      measurement_fault_str(measurement_last_fault()));
     return httpd_resp_send(req, out, n);
 }
 

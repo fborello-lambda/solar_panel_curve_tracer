@@ -26,6 +26,9 @@ static uint32_t expected_top_from_knee(const sweep_range_t *r)
         top = r->hard_max;
     if (top < r->min_top)
         top = r->min_top;
+    // A collapsed sweep must also be able to reach the collapsing probe.
+    if (r->collapsed && top < r->duty)
+        top = (r->duty < r->hard_max) ? r->duty : r->hard_max;
     return top;
 }
 
@@ -121,7 +124,7 @@ void test_sweep_range_knee_estimate_tracks_isc(void)
         TEST_ASSERT_TRUE_MESSAGE(rel_err <= 0.10f, "knee duty not within 10% of Isc/scale");
 
         TEST_ASSERT_EQUAL_UINT32_MESSAGE(expected_top_from_knee(&r), r.top,
-                                          "top is not knee*115%, clamped to [min_top, hard_max]");
+                                          "top is not max(knee*115%, collapsing duty), clamped to [min_top, hard_max]");
     }
 }
 
@@ -204,4 +207,27 @@ void test_sweep_range_collapse_on_first_probe_is_sane(void)
     TEST_ASSERT_EQUAL_UINT32(first_duty, r.knee);
     TEST_ASSERT_TRUE(r.top >= r.min_top);
     TEST_ASSERT_TRUE(r.top <= r.hard_max);
+}
+
+void test_sweep_range_low_collapse_reading_keeps_last_regulating_current(void)
+{
+    // Replays a real bench-supply sweep (12.2 V, 60 mA limit): the source
+    // folded back at the collapse and read 1.9 mA. Isc must not drop below
+    // the last regulating probe (53 mA at duty 128), so the sweep keeps
+    // its range instead of shrinking to duty 0..20.
+    sweep_range_t r;
+    sweep_range_begin(&r, PWM_RES, 20);
+    TEST_ASSERT_TRUE(sweep_range_on_voc(&r, 12232.0f));
+
+    const float v[] = {12233.0f, 12233.0f, 12230.0f, 12224.0f, 9529.0f, 19.0f};
+    const float i[] = {3.6f, 7.7f, 15.2f, 30.5f, 53.1f, 1.9f};
+    bool done = false;
+    for (size_t k = 0; k < sizeof(v) / sizeof(v[0]) && !done; k++)
+        done = sweep_range_on_probe(&r, v[k], i[k]);
+
+    TEST_ASSERT_TRUE(done);
+    TEST_ASSERT_TRUE(r.collapsed);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 53.1f, r.isc_mA);
+    TEST_ASSERT_TRUE(r.knee >= 128);
+    TEST_ASSERT_TRUE(r.top > r.knee);
 }

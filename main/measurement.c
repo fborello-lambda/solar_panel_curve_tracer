@@ -33,6 +33,8 @@ static const char *TAG = "MEASURE";
 #define SWEEP_SETTLE_MS 250              // settle time after a duty step before sampling
 #define SWEEP_FIRST_POINT_SETTLE_MS 1000 // longer settle for the true open-circuit point
 #define SWEEP_SAMPLE_WINDOW_MS 100       // averaging window, an integer number of 50/60 Hz half-cycles
+#define SWEEP_NO_LOAD_DUTY 64            // by this duty the load must draw current...
+#define SWEEP_NO_LOAD_MIN_MA 2.0f        // ...at least this much, or the load is broken
 #define SWEEP_STOP_POLL_MS 25            // chunk size for waits, so stop is honored quickly
 
 static curve_producer_mode_t s_producer_mode = CURVE_PRODUCER_REAL;
@@ -171,12 +173,37 @@ bool measurement_init_load_control_hw(void)
     return true;
 }
 
+static volatile measurement_fault_t s_last_fault = MEASUREMENT_FAULT_NONE;
+
+measurement_fault_t measurement_last_fault(void)
+{
+    return s_last_fault;
+}
+
+const char *measurement_fault_str(measurement_fault_t fault)
+{
+    switch (fault)
+    {
+    case MEASUREMENT_FAULT_NO_PANEL:
+        return "no_panel";
+    case MEASUREMENT_FAULT_NO_LOAD:
+        return "no_load";
+    default:
+        return "none";
+    }
+}
+
 static void measurement_apply_state_locked(bool running)
 {
     g_app.measurement_running = running;
     if (running)
     {
         led_set_color(WS2812_GPIO, (led_color_t){.r = 0, .g = 20, .b = 0});
+    }
+    else if (s_last_fault != MEASUREMENT_FAULT_NONE)
+    {
+        // Stays red until the next sweep starts.
+        led_set_color(WS2812_GPIO, (led_color_t){.r = 30, .g = 0, .b = 0});
     }
     else
     {
@@ -186,9 +213,12 @@ static void measurement_apply_state_locked(bool running)
     app_display_mark_dirty();
 }
 
+// Set while a debug raw scan drives the load (see measurement_raw_scan).
+static volatile bool s_raw_scan_active = false;
+
 static bool measurement_start_locked(measurement_refuse_reason_t *out_reason)
 {
-    if (g_app.measurement_running)
+    if (g_app.measurement_running || s_raw_scan_active)
     {
         if (out_reason)
             *out_reason = MEASUREMENT_REFUSE_ALREADY_RUNNING;
@@ -214,6 +244,7 @@ static bool measurement_start_locked(measurement_refuse_reason_t *out_reason)
 
     db_reset();
     g_app.measurement_stop_requested = false;
+    s_last_fault = MEASUREMENT_FAULT_NONE;
 
     TaskFunction_t producer_fn = (s_producer_mode == CURVE_PRODUCER_DUMMY) ? dummy_producer_task : producer_task;
     const char *producer_name = (s_producer_mode == CURVE_PRODUCER_DUMMY) ? "producer_demo" : "producer";
@@ -295,19 +326,13 @@ static bool sleep_chunked_checking_stop(uint32_t ms)
     return g_app.measurement_stop_requested;
 }
 
-// Commands `duty_steps`, settles for `settle_ms`, then averages bus/shunt
-// voltage readings over a fixed SWEEP_SAMPLE_WINDOW_MS window (sampled as
-// fast as I2C allows) — 100 ms spans an integer number of half-cycles of
-// both 50 Hz and 60 Hz mains flicker, so ripple from a lamp cancels out.
-// Used by both auto-range probes and recorded sweep points.
-static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms,
-                                       float *out_v, float *out_i_mA, float *out_power_mW)
+// Averages bus/shunt voltage readings over SWEEP_SAMPLE_WINDOW_MS, sampled
+// as fast as I2C allows. 100 ms spans an integer number of half-cycles of
+// both 50 Hz and 60 Hz mains flicker, so ripple from a lamp cancels out,
+// and the sensor noise dithers the 10 uV (1 mA) steps down to ~0.1-0.2 mA.
+// Returns false if no read succeeded (or, when `stoppable`, on a stop request).
+static bool sample_window(bool stoppable, float *out_bus_mV, float *out_shunt_uV)
 {
-    pwm_controller_set_duty_in_res_steps(duty_steps);
-
-    if (sleep_chunked_checking_stop(settle_ms))
-        return MEASURE_STOP_REQUESTED;
-
     int64_t bus_mV_sum = 0;
     int64_t shunt_uV_sum = 0;
     int valid = 0;
@@ -315,8 +340,8 @@ static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms,
     int64_t window_start = esp_timer_get_time();
     while ((esp_timer_get_time() - window_start) < (int64_t)SWEEP_SAMPLE_WINDOW_MS * 1000)
     {
-        if (g_app.measurement_stop_requested)
-            break;
+        if (stoppable && g_app.measurement_stop_requested)
+            return false;
 
         int32_t bus_mV = 0, shunt_uV = 0;
         bool ok = ina219_get_bus_voltage_mv(g_app.ina_dev, &bus_mV) == ESP_OK;
@@ -329,16 +354,54 @@ static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms,
         }
     }
 
+    if (valid == 0)
+        return false;
+    *out_bus_mV = (float)bus_mV_sum / (float)valid;
+    *out_shunt_uV = (float)shunt_uV_sum / (float)valid;
+    return true;
+}
+
+bool measurement_sample(float *out_bus_mV, float *out_raw_mA)
+{
+    float bus_mV = 0.0f, shunt_uV = 0.0f;
+    if (!g_app.ina_ready || !sample_window(false, &bus_mV, &shunt_uV))
+        return false;
+    int shunt_mOhm = g_app.ina_cal.shunt_resistor_mOhm;
+    *out_bus_mV = bus_mV;
+    *out_raw_mA = (shunt_mOhm > 0) ? (shunt_uV / (float)shunt_mOhm) : 0.0f;
+    return true;
+}
+
+// Commands `duty_steps`, settles for `settle_ms`, then averages one
+// sample_window(). Used by both auto-range probes and recorded sweep points.
+// `err_mA_per_V` is the INA219 current-reading error per volt of bus
+// voltage (measured by auto_range()); `err_mA_per_V * V` is subtracted
+// from every reading. Pass 0 when it isn't known yet (the Voc probe).
+static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms, float err_mA_per_V,
+                                       float *out_v, float *out_i_mA, float *out_power_mW)
+{
+    pwm_controller_set_duty_in_res_steps(duty_steps);
+
+    if (sleep_chunked_checking_stop(settle_ms))
+        return MEASURE_STOP_REQUESTED;
+
+    float bus_mV = 0.0f, shunt_uV = 0.0f;
+    bool got = sample_window(true, &bus_mV, &shunt_uV);
+
     if (g_app.measurement_stop_requested)
         return MEASURE_STOP_REQUESTED;
 
-    if (valid == 0)
+    if (!got)
         return MEASURE_NO_VALID_READS;
 
-    float bus_mV = (float)bus_mV_sum / (float)valid;
-    float shunt_uV = (float)shunt_uV_sum / (float)valid;
     int shunt_mOhm = g_app.ina_cal.shunt_resistor_mOhm;
     float current_mA = (shunt_mOhm > 0) ? (shunt_uV / (float)shunt_mOhm) : 0.0f;
+    float raw_mA = current_mA;
+    current_mA -= err_mA_per_V * (bus_mV / 1000.0f);
+    // Machine-readable dump for debugging over USB serial:
+    // CSV,duty,bus_mV,shunt_uV,raw_mA,corrected_mA
+    ESP_LOGI(TAG, "CSV,%lu,%.1f,%.1f,%.3f,%.3f", (unsigned long)duty_steps, (double)bus_mV,
+             (double)shunt_uV, (double)raw_mA, (double)current_mA);
     float voltage_mV = bus_mV - (shunt_uV / 1000.0f);
 
     if (voltage_mV < 0.0f)
@@ -363,15 +426,30 @@ static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms,
 // SWEEP_COLLAPSE_PERCENT_OF_VOC of Voc). Probe points are not recorded in
 // db. Returns false if the sweep should abort (no panel, stop requested, or
 // a safety breach).
-static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, float *out_voc_mv)
+static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, float *out_voc_mv,
+                        float *out_err_mA_per_V, float *out_isc_mA)
 {
     sweep_range_t sr;
     sweep_range_begin(&sr, pwm_res, DB_MAX_SAMPLES);
 
-    float voc_v, dummy_i, dummy_p;
-    measure_result_t r = measure_point(0, SWEEP_SETTLE_MS, &voc_v, &dummy_i, &dummy_p);
+    // At duty 0 the load draws nothing (verified with the bench supply's own
+    // ammeter), yet the INA219 reads a current proportional to the bus
+    // voltage: the chip samples the bus voltage through VIN-, and that
+    // input current flowing through the 10 ohm input-filter resistors
+    // (R14/R15) looks like shunt voltage. About 3 mA per volt on rev1, so a
+    // 21 V panel would read ~65 mA with no load at all. Measure it here,
+    // where the true current is zero, and subtract err * V from every
+    // reading in this sweep.
+    float voc_v, zero_i_mA, dummy_p;
+    measure_result_t r = measure_point(0, SWEEP_SETTLE_MS, 0.0f, &voc_v, &zero_i_mA, &dummy_p);
     if (r != MEASURE_OK)
         return false;
+
+    float err_mA_per_V = (voc_v >= 0.5f) ? (zero_i_mA / voc_v) : 0.0f;
+    *out_err_mA_per_V = err_mA_per_V;
+    g_app.ina_err_mA_per_V = err_mA_per_V;
+    ESP_LOGI(TAG, "auto_range: zero-load reading %.2f mA at %.3f V -> current error %.3f mA/V",
+             zero_i_mA, voc_v, err_mA_per_V);
 
     float voc_mV = voc_v * 1000.0f;
     *out_voc_mv = voc_mV;
@@ -380,6 +458,7 @@ static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, 
     {
         ESP_LOGW(TAG, "auto_range: Voc %.0f mV below %d mV, no panel to sweep (dark, disconnected)",
                  voc_mV, SWEEP_VOC_MIN_MV);
+        s_last_fault = MEASUREMENT_FAULT_NO_PANEL;
         return false;
     }
 
@@ -390,12 +469,24 @@ static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, 
     for (;;)
     {
         float v, i_mA, p_mW;
-        r = measure_point(sr.duty, SWEEP_SETTLE_MS, &v, &i_mA, &p_mW);
+        r = measure_point(sr.duty, SWEEP_SETTLE_MS, err_mA_per_V, &v, &i_mA, &p_mW);
         if (r != MEASURE_OK)
             return false;
 
         float v_mV = v * 1000.0f;
         ESP_LOGI(TAG, "auto_range: probe duty=%lu -> V=%.0f mV I=%.1f mA", (unsigned long)sr.duty, v_mV, i_mA);
+
+        // The load commands ~0.48 mA per duty step, so by SWEEP_NO_LOAD_DUTY
+        // the current must have risen unless the panel already collapsed.
+        // If it hasn't, the load circuit (op-amp, MOSFET, wiring) isn't
+        // drawing anything and the sweep would only record Voc.
+        if (sr.duty >= SWEEP_NO_LOAD_DUTY && i_mA < SWEEP_NO_LOAD_MIN_MA && v_mV > 0.5f * voc_mV)
+        {
+            ESP_LOGW(TAG, "auto_range: %.1f mA at duty %lu with the panel still at %.0f mV, load not responding",
+                     i_mA, (unsigned long)sr.duty, v_mV);
+            s_last_fault = MEASUREMENT_FAULT_NO_LOAD;
+            return false;
+        }
 
         if (sweep_range_on_probe(&sr, v_mV, i_mA))
             break;
@@ -417,6 +508,7 @@ static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, 
 
     *out_top = sr.top;
     *out_knee = sr.knee;
+    *out_isc_mA = sr.isc_mA;
     return true;
 }
 
@@ -475,8 +567,8 @@ static void producer_task(void *arg)
     ESP_LOGI(TAG, "producer_task: starting auto-range");
 
     uint32_t top = 0, knee = 0;
-    float voc_mV = 0.0f;
-    if (!auto_range(pwm_res, &top, &knee, &voc_mV))
+    float voc_mV = 0.0f, err_mA_per_V = 0.0f, isc_mA = 0.0f;
+    if (!auto_range(pwm_res, &top, &knee, &voc_mV, &err_mA_per_V, &isc_mA))
     {
         ESP_LOGW(TAG, "producer_task: auto-range aborted, recording nothing");
         ESP_LOGI(TAG, "producer_task stack high water mark: %u words", (unsigned)uxTaskGetStackHighWaterMark(NULL));
@@ -485,13 +577,15 @@ static void producer_task(void *arg)
         return;
     }
 
-    ESP_LOGI(TAG, "producer_task: Starting data production (top=%lu knee=%lu)",
-             (unsigned long)top, (unsigned long)knee);
+    ESP_LOGI(TAG, "producer_task: Starting data production (top=%lu knee=%lu isc=%.1f mA)",
+             (unsigned long)top, (unsigned long)knee, (double)isc_mA);
 
-    uint32_t duties[DB_MAX_SAMPLES];
-    sweep_plan_build(top, knee, duties, DB_MAX_SAMPLES);
+    sweep_adapt_t adapt;
+    sweep_adapt_begin(&adapt, voc_mV, isc_mA, knee, top, DB_MAX_SAMPLES);
 
-    for (int step = 0; step < DB_MAX_SAMPLES; step++)
+    uint32_t duty = 0;
+    int step = 0; // recorded points
+    for (int iter = 0; iter < DB_MAX_SAMPLES + SWEEP_ADAPT_REFINE_POINTS + 2 && step < DB_MAX_SAMPLES; iter++)
     {
         if (g_app.measurement_stop_requested)
         {
@@ -499,15 +593,13 @@ static void producer_task(void *arg)
             break;
         }
 
-        uint32_t duty = duties[step];
-
         // Step 0 (duty 0) after auto-range's high-duty last probe needs a
         // longer settle so it reads a true open-circuit voltage instead of
         // the RC filter still draining down.
         uint32_t settle_ms = (step == 0) ? SWEEP_FIRST_POINT_SETTLE_MS : SWEEP_SETTLE_MS;
 
         float v, i_mA, p_mW;
-        measure_result_t r = measure_point(duty, settle_ms, &v, &i_mA, &p_mW);
+        measure_result_t r = measure_point(duty, settle_ms, err_mA_per_V, &v, &i_mA, &p_mW);
 
         if (r == MEASURE_STOP_REQUESTED)
         {
@@ -527,6 +619,21 @@ static void producer_task(void *arg)
             break;
         }
 
+        uint32_t next_duty = sweep_adapt_next(&adapt, v * 1000.0f, i_mA);
+
+        if (sweep_adapt_last_discarded(&adapt))
+        {
+            // Jumped over a sharp knee: drain the RC filter at duty 0, then
+            // climb back into the gap (the next duty is below this one).
+            ESP_LOGI(TAG, "producer_task: collapse at duty %lu after a large jump, re-sweeping the knee from duty %lu",
+                     (unsigned long)duty, (unsigned long)next_duty);
+            pwm_controller_set_duty_in_res_steps(0);
+            if (sleep_chunked_checking_stop(SWEEP_FIRST_POINT_SETTLE_MS))
+                break;
+            duty = next_duty;
+            continue;
+        }
+
         if (!db_add(v, i_mA))
         {
             ESP_LOGW(TAG, "producer_task: db_add failed, dropping sample (v=%.3f,i=%.3f)", v, i_mA);
@@ -536,6 +643,14 @@ static void producer_task(void *arg)
             ESP_LOGI(TAG, "producer_task: point %d duty=%lu V=%.3f I=%.3f mA P=%.1f mW",
                      step, (unsigned long)duty, v, i_mA, p_mW);
         }
+
+        if (next_duty == SWEEP_ADAPT_DONE)
+        {
+            ESP_LOGI(TAG, "producer_task: adaptive sweep done after %d points", step + 1);
+            break;
+        }
+        duty = next_duty;
+        step++;
     }
 
     ESP_LOGI(TAG, "producer_task: Finished data production");
@@ -544,4 +659,30 @@ static void producer_task(void *arg)
 
     producer_finish("producer_task");
     vTaskDelete(NULL);
+}
+
+bool measurement_raw_scan(uint32_t max_duty, uint32_t step)
+{
+    if (g_app.measurement_running || g_app.dynamic_load_active || !g_app.ina_ready || !g_app.pwm_ready)
+    {
+        ESP_LOGW(TAG, "raw_scan: refused (running=%d dynamic=%d ina=%d pwm=%d)", g_app.measurement_running,
+                 g_app.dynamic_load_active, g_app.ina_ready, g_app.pwm_ready);
+        return false;
+    }
+    if (step == 0)
+        step = 1;
+
+    s_raw_scan_active = true;
+    ESP_LOGI(TAG, "raw_scan: duty 0..%lu step %lu (CSV,duty,bus_mV,shunt_uV,raw_mA,corrected_mA)",
+             (unsigned long)max_duty, (unsigned long)step);
+    for (uint32_t duty = 0; duty <= max_duty; duty += step)
+    {
+        float v, i_mA, p_mW;
+        if (measure_point(duty, SWEEP_SETTLE_MS, 0.0f, &v, &i_mA, &p_mW) != MEASURE_OK)
+            break;
+    }
+    pwm_controller_set_duty_in_res_steps(0);
+    s_raw_scan_active = false;
+    ESP_LOGI(TAG, "raw_scan: done");
+    return true;
 }

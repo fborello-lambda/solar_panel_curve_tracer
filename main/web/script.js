@@ -281,6 +281,18 @@
   const statusPill = document.getElementById("statusPill");
   const statusText = document.getElementById("statusText");
   const sensorNote = document.getElementById("sensorNote");
+  const faultNote = document.getElementById("faultNote");
+  const faultNoteText = document.getElementById("faultNoteText");
+  let lastFault = "none";
+  // Shown after a REAL sweep aborted because no panel or no load was found
+  // (the board's LED is red at the same time).
+  function renderFault() {
+    if (!faultNote || !faultNoteText) return;
+    const key = lastFault === "no_panel" ? "note_no_panel" : lastFault === "no_load" ? "note_no_load" : null;
+    faultNote.style.display = key ? "flex" : "none";
+    if (key) faultNoteText.textContent = i18n.t(key);
+  }
+  window.addEventListener("i18n:change", renderFault);
   let lastStatusState = "idle";
   let lastStatusLabelKey = "status_idle";
 
@@ -357,6 +369,8 @@
         const showNote = s.mode === "REAL" && s.ina_ready === false;
         sensorNote.style.display = showNote ? "flex" : "none";
       }
+      lastFault = s.fault || "none";
+      renderFault();
     } catch (e) {
       // leave last known state; the /data poller already surfaces connection errors
     }

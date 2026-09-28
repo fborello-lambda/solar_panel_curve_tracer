@@ -5,11 +5,12 @@
 void setUp(void) {}
 void tearDown(void) {}
 
-// sweep_plan_build
-void test_sweep_plan_build_shape_across_isc_range(void);
-void test_sweep_plan_build_never_collapsed_case(void);
-void test_sweep_plan_build_knee_clustering(void);
-void test_sweep_duty_for_step_last_point_always_equals_top_by_construction(void);
+// adaptive arc-length sweep
+void test_sweep_adapt_reaches_isc_across_range(void);
+void test_sweep_adapt_no_large_normalized_gaps(void);
+void test_sweep_adapt_tiny_isc_terminates_within_budget(void);
+void test_sweep_adapt_prints_isc_50ma_and_5ma_tables(void);
+void test_sweep_adapt_resweeps_a_sharp_knee(void);
 
 // sweep_range state machine
 void test_sweep_range_probes_strictly_ascending_and_bounded(void);
@@ -18,6 +19,7 @@ void test_sweep_range_knee_times_headroom_clamped_to_hard_max(void);
 void test_sweep_range_low_voc_is_no_panel(void);
 void test_sweep_range_strong_panel_hits_hard_max(void);
 void test_sweep_range_collapse_on_first_probe_is_sane(void);
+void test_sweep_range_low_collapse_reading_keeps_last_regulating_current(void);
 
 // json_builder
 void test_json_builder_zero_points(void);
@@ -39,10 +41,11 @@ void app_main(void)
 {
     UNITY_BEGIN();
 
-    RUN_TEST(test_sweep_plan_build_shape_across_isc_range);
-    RUN_TEST(test_sweep_plan_build_never_collapsed_case);
-    RUN_TEST(test_sweep_plan_build_knee_clustering);
-    RUN_TEST(test_sweep_duty_for_step_last_point_always_equals_top_by_construction);
+    RUN_TEST(test_sweep_adapt_reaches_isc_across_range);
+    RUN_TEST(test_sweep_adapt_no_large_normalized_gaps);
+    RUN_TEST(test_sweep_adapt_tiny_isc_terminates_within_budget);
+    RUN_TEST(test_sweep_adapt_prints_isc_50ma_and_5ma_tables);
+    RUN_TEST(test_sweep_adapt_resweeps_a_sharp_knee);
 
     RUN_TEST(test_sweep_range_probes_strictly_ascending_and_bounded);
     RUN_TEST(test_sweep_range_knee_estimate_tracks_isc);
@@ -50,6 +53,7 @@ void app_main(void)
     RUN_TEST(test_sweep_range_low_voc_is_no_panel);
     RUN_TEST(test_sweep_range_strong_panel_hits_hard_max);
     RUN_TEST(test_sweep_range_collapse_on_first_probe_is_sane);
+    RUN_TEST(test_sweep_range_low_collapse_reading_keeps_last_regulating_current);
 
     RUN_TEST(test_json_builder_zero_points);
     RUN_TEST(test_json_builder_one_point);

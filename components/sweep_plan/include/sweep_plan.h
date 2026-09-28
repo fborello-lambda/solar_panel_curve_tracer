@@ -1,9 +1,10 @@
 #pragma once
 
 /*
- * Pure sweep-plan math: per-step duty placement and the auto-range
- * decision state machine. No hardware, no FreeRTOS, no I2C — this is what
- * lets it build and run on the `linux` IDF target for host unit tests.
+ * Pure sweep-plan math: adaptive arc-length duty placement and the
+ * auto-range decision state machine. No hardware, no FreeRTOS, no I2C —
+ * this is what lets it build and run on the `linux` IDF target for host
+ * unit tests.
  *
  * All I/O (measuring a point, logging, honoring a stop request, power
  * limits) stays in main/measurement.c, which drives these functions.
@@ -18,41 +19,12 @@ extern "C"
 {
 #endif
 
-// ── sweep point placement tunables ──────────────────────────────────────
-#define SWEEP_FINE_LEG_POINTS 12         // points spent across the knee band
-#define SWEEP_TAIL_LEG_POINTS 2          // points spent from the knee band to top
-#define SWEEP_FINE_BAND_START_PERCENT 85 // fine band start, % of knee duty
-#define SWEEP_FINE_BAND_END_PERCENT 102  // fine band end, % of knee duty
-
 // ── auto-range tunables ─────────────────────────────────────────────────
 #define SWEEP_PROBE_START_DUTY 8         // first duty the doubling search tries
 #define SWEEP_COLLAPSE_PERCENT_OF_VOC 15 // panel counts as collapsed below this % of Voc
 #define SWEEP_DUTY_MAX_PERCENT 20        // hard ceiling on commanded duty, % of pwm_res
 #define SWEEP_KNEE_HEADROOM_PERCENT 115  // sweep top = knee * this / 100
 #define SWEEP_VOC_MIN_MV 500             // below this, no panel worth sweeping
-
-    /**
-     * @brief Commanded duty for sweep step `step` of `n`, given the
-     * auto-ranged `top` and the `knee` duty it was derived from.
-     *
-     * Three legs, not a linear ramp: a coarse leg over the flat below-knee
-     * region (a panel there is a current source, so coarse steps lose
-     * little), most of the budget across the knee band where the curve
-     * actually bends, and a short tail up to `top` to pin Isc. This is the
-     * raw per-leg placement only; it is not guaranteed strictly increasing
-     * on its own (see sweep_plan_build()).
-     */
-    uint32_t sweep_duty_for_step(int step, uint32_t top, uint32_t knee, size_t n);
-
-    /**
-     * @brief Build `n` strictly-increasing sweep duties into `duties`.
-     *
-     * duties[0] == 0, duties[n-1] == top, every duty <= top, and each duty
-     * is strictly greater than the previous one (sweep_duty_for_step's raw
-     * placement is nudged up where needed, and clamped so every remaining
-     * step still has room to strictly increase up to `top`).
-     */
-    void sweep_plan_build(uint32_t top, uint32_t knee, uint32_t *duties, size_t n);
 
     // ── auto-range state machine ────────────────────────────────────────
 
@@ -114,6 +86,81 @@ extern "C"
      *         (r->duty now holds the next duty to try).
      */
     bool sweep_range_on_probe(sweep_range_t *r, float v_mV, float i_mA);
+
+    // ── adaptive arc-length sweep ────────────────────────────────────────
+    //
+    // Places points by normalized arc length along the curve (v = V/Voc,
+    // i = I/Isc) instead of fixed fractions of the knee duty, so the steep
+    // part near Voc, the knee, and the flat part near Isc all get points
+    // for any Isc. Duty only ever steps up (the RC input filter drains
+    // slowly, so a descending step would read stale current).
+
+#define SWEEP_ADAPT_TARGET_ARC 2.0f     // total normalized arc length budget (S)
+#define SWEEP_ADAPT_COLLAPSE_PERCENT 3  // done once V < this % of Voc
+#define SWEEP_ADAPT_JUMP_BUDGET_LEFT 2  // when this few points remain, jump toward top
+#define SWEEP_ADAPT_MIN_DUTY_STEP 1     // duty step floor
+#define SWEEP_ADAPT_DEADZONE_GROW 2.0f  // step multiplier when current gain looks stalled
+#define SWEEP_ADAPT_REFINE_GAP 2.0f     // re-sweep a gap if one step spans > this x the target arc
+#define SWEEP_ADAPT_REFINE_POINTS 6     // max extra points spent filling that gap
+#define SWEEP_ADAPT_REFINE_MAX 2        // at most this many re-sweeps per sweep (each costs a 1 s drain)
+
+#define SWEEP_ADAPT_DONE UINT32_MAX // sentinel returned by sweep_adapt_next() when finished
+
+    /**
+     * @brief True if the point just passed to sweep_adapt_next() must not be
+     * recorded: the sweep jumped straight into the collapse and will re-sweep
+     * the knee from below. The caller must bring the load back to duty 0 and
+     * let it settle (duty only ever steps up) before measuring the next duty.
+     */
+
+    typedef struct
+    {
+        uint32_t top;      // sweep ceiling duty
+        float voc_mV;
+        float isc_mA;
+        float collapse_mV; // V below this counts as collapsed (Isc reached)
+        float gain0;        // fallback mA/duty gain, from auto-range's isc/knee
+
+        size_t n_points;
+        size_t points_done;
+
+        uint32_t next_duty; // duty the point about to be fed was measured at
+
+        uint32_t prev_duty;
+        float prev_v_mV;
+        float prev_i_mA;
+        bool have_prev;
+
+        uint32_t refine_count; // knee gaps re-swept so far
+        bool refine_active;    // currently re-sweeping a gap in fixed steps
+        bool discard_last;  // the point just fed must not be recorded
+        uint32_t refine_step; // fixed duty step while re-sweeping the knee
+        uint32_t refine_end;  // collapsing duty found on the first pass
+
+        bool done;
+    } sweep_adapt_t;
+
+    /**
+     * @brief Start the adaptive sweep after auto-range has produced
+     * voc_mV/isc_mA/knee_duty/top_duty.
+     *
+     * Feed the Voc probe itself (duty 0) as the first point via
+     * sweep_adapt_next(a, voc_mV, ~0 mA) to get the first real step duty.
+     */
+    void sweep_adapt_begin(sweep_adapt_t *a, float voc_mV, float isc_mA,
+                            uint32_t knee_duty, uint32_t top_duty, size_t n_points);
+
+    /**
+     * @brief Feed the point just measured (at the duty last returned, or
+     * duty 0 for the first call) and get the next duty to command.
+     *
+     * @return the next duty to command (strictly greater than every duty
+     *         fed so far), or SWEEP_ADAPT_DONE if the sweep is finished
+     *         (V collapsed below the threshold, or duty/point budget is
+     *         exhausted).
+     */
+    uint32_t sweep_adapt_next(sweep_adapt_t *a, float v_mV, float i_mA);
+    bool sweep_adapt_last_discarded(const sweep_adapt_t *a);
 
 #ifdef __cplusplus
 }

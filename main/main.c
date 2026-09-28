@@ -8,6 +8,7 @@
 #include "app/app_state.h"
 #include "app/app_tasks.h"
 #include "measurement.h"
+#include "debug_console.h"
 #include "ui.h"
 
 #include "init.h"
@@ -55,4 +56,5 @@ void app_main(void)
     measurement_set_producer_mode(CURVE_PRODUCER_REAL);
     ui_init_state();
     app_tasks_start();
+    debug_console_start();
 }
