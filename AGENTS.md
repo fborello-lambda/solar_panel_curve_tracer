@@ -103,7 +103,7 @@ Partition table offset: `0xD000` (pushed up to fit the secure-boot-signed bootlo
   mW footer; a single press does nothing. A long press (button held 700 ms, `ENCODER_EVENT_LONG_PRESS` from a one-shot
   esp_timer in `driver_encoder.c`) returns to the MEASURE menu; other screens ignore it.
 - **Dynamic load**: encoder adjusts PWM setpoint live, capped at `DYNAMIC_LOAD_DUTY_MAX_PERCENT` (10% duty). It
-  shares the same `LOAD_POWER_LIMIT_MW` (5000 mW) power cap as the sweep, with a hysteresis margin
+  has its own `DYNAMIC_LOAD_POWER_LIMIT_MW` (3000 mW) power cap, lower than the sweep's because it can hold a setpoint indefinitely, with a hysteresis margin
   (`LOAD_POWER_NEAR_MARGIN_MW`) before backing off duty.
 - **OTA**: single-file app update via the `/ota` HTTP endpoint (`app-standard.bin`), no `idf.py ota` command. No
   app rollback: the newly flashed OTA slot is committed on the next boot.
@@ -118,7 +118,7 @@ Partition table offset: `0xD000` (pushed up to fit the secure-boot-signed bootlo
   design: R15 / (INA219 bus input ~320 kOhm x R12) = 3.13, and the first board measured 3.20) and can be refined per
   board with the `kcal` console command (NVS). The load's real idle current (~4 mA, op-amp offset) is reported. The dynamic load screen uses the
   same correction and averages over the same 100 ms window. The sweep hard-stops (aborts, keeping points already recorded) if
-  measured power reaches the shared 5000 mW power cap.
+  measured power reaches `SWEEP_POWER_LIMIT_MW` (10000 mW); the sweep only passes the MPP briefly.
 
 ---
 

@@ -685,7 +685,7 @@ void ui_render_display_frame(uint8_t *fb)
         }
 
         if (g_app.dynamic_power_limited)
-            snprintf(status_line, sizeof(status_line), "LIMIT: MAX %.0fW", LOAD_POWER_LIMIT_MW / 1000.0f);
+            snprintf(status_line, sizeof(status_line), "LIMIT: MAX %.0fW", DYNAMIC_LOAD_POWER_LIMIT_MW / 1000.0f);
         else
             snprintf(status_line, sizeof(status_line), "STATUS: OK");
 

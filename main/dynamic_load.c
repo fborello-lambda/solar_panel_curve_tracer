@@ -41,7 +41,7 @@ void dynamic_load_adjust(int dir)
 
     if (dir > 0 && g_app.dynamic_measured_valid)
     {
-        float near_limit_mW = LOAD_POWER_LIMIT_MW - LOAD_POWER_NEAR_MARGIN_MW;
+        float near_limit_mW = DYNAMIC_LOAD_POWER_LIMIT_MW - LOAD_POWER_NEAR_MARGIN_MW;
         if (g_app.dynamic_power_mW >= near_limit_mW)
         {
             g_app.dynamic_power_limited = true;
@@ -101,7 +101,7 @@ void dynamic_load_update_measured(void)
         ESP_LOGI(TAG, "DYN,%lu,%.1f,%.3f,%.3f", (unsigned long)g_app.dynamic_duty_steps,
                  (double)avg_bus_mV, (double)raw_mA, (double)g_app.dynamic_measured_mA);
 
-        if (g_app.dynamic_power_mW >= LOAD_POWER_LIMIT_MW)
+        if (g_app.dynamic_power_mW >= DYNAMIC_LOAD_POWER_LIMIT_MW)
         {
             g_app.dynamic_power_limited = true;
             if (g_app.dynamic_duty_steps > 0)
@@ -124,7 +124,7 @@ void dynamic_load_update_measured(void)
                 }
             }
         }
-        else if (g_app.dynamic_power_mW < (LOAD_POWER_LIMIT_MW - LOAD_POWER_NEAR_MARGIN_MW))
+        else if (g_app.dynamic_power_mW < (DYNAMIC_LOAD_POWER_LIMIT_MW - LOAD_POWER_NEAR_MARGIN_MW))
         {
             g_app.dynamic_power_limited = false;
         }

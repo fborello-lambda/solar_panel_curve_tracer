@@ -555,7 +555,7 @@ static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms, f
     *out_i_mA = current_mA;
     *out_power_mW = (voltage_mV * current_mA) / 1000.0f;
 
-    if (*out_power_mW >= LOAD_POWER_LIMIT_MW)
+    if (*out_power_mW >= SWEEP_POWER_LIMIT_MW)
         return MEASURE_POWER_LIMIT;
 
     return MEASURE_OK;
@@ -774,7 +774,7 @@ static void producer_task(void *arg)
         if (r == MEASURE_POWER_LIMIT)
         {
             ESP_LOGW(TAG, "producer_task: power limit reached (%.0f mW >= %.0f mW) at step %d, aborting sweep",
-                     p_mW, (float)LOAD_POWER_LIMIT_MW, step);
+                     p_mW, (float)SWEEP_POWER_LIMIT_MW, step);
             break;
         }
 

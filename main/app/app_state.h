@@ -99,6 +99,9 @@ extern app_state_t g_app;
 #define DYNAMIC_LOAD_DUTY_MAX_PERCENT 10
 #define DYNAMIC_LOAD_UPDATE_MS 120
 #define DYNAMIC_LOAD_SETTLE_MS 80
-#define LOAD_POWER_LIMIT_MW 5000.0f
+// Load power caps. A sweep only sits near the MPP for a moment, so it gets a higher cap than the
+// dynamic load, which can hold one setpoint indefinitely.
+#define SWEEP_POWER_LIMIT_MW 10000.0f
+#define DYNAMIC_LOAD_POWER_LIMIT_MW 3000.0f
 #define LOAD_POWER_NEAR_MARGIN_MW 150.0f
 #define OLED_IDLE_TIMEOUT_S 60
