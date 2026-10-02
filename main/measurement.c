@@ -36,7 +36,6 @@ static const char *TAG = "MEASURE";
 #define SWEEP_SAMPLE_WINDOW_MS 100       // averaging window, an integer number of 50/60 Hz half-cycles
 #define SWEEP_NO_LOAD_DUTY 64            // by this duty the load must draw current...
 #define SWEEP_NO_LOAD_MIN_MA 2.0f        // ...at least this much, or the load is broken
-#define INA_OFFSET_AUTO_STEP_MA 3.0f     // boot only re-zeroes changes smaller than this
 #define INA_OFFSET_MAX_MA 8.0f           // larger zero readings are real current, never offset
 #define SWEEP_REVERSED_MIN_MA 2.0f       // current at ~0 V above this (after offset): panel reversed
 #define SWEEP_NO_PANEL_MV 500.0f         // input below this with no load: nothing can flow
@@ -181,12 +180,13 @@ bool measurement_init_load_control_hw(void)
     // Board powered with no panel attached: a free, exact offset reading.
     {
         float bus_mV = 0.0f, raw_mA = 0.0f;
-        // Only small corrections automatically: a reversed panel at boot
-        // would also read ~0 V with a few mA flowing. Bigger changes need
-        // the explicit `zero` console command with the panel unplugged.
+        // Power-up is the calibration moment: with the panel unplugged the
+        // input is ~0 V and nothing can flow, so the reading is the offset.
+        // With a panel attached the stored value from the last such boot is
+        // kept. (A panel connected backwards also reads ~0 V but carries real
+        // current; the plausibility bound rejects most of those.)
         if (measurement_sample(&bus_mV, &raw_mA) && bus_mV < SWEEP_NO_PANEL_MV &&
-            raw_mA > -INA_OFFSET_MAX_MA && raw_mA < INA_OFFSET_MAX_MA &&
-            raw_mA - s_ina_offset_mA < INA_OFFSET_AUTO_STEP_MA && s_ina_offset_mA - raw_mA < INA_OFFSET_AUTO_STEP_MA)
+            raw_mA > -INA_OFFSET_MAX_MA && raw_mA < INA_OFFSET_MAX_MA)
             ina_offset_capture(raw_mA);
     }
 
@@ -385,10 +385,9 @@ static bool sample_window(bool stoppable, float *out_bus_mV, float *out_shunt_uV
 
 // INA219 fixed zero offset (shunt ADC offset), in mA. Unlike the
 // voltage-proportional error (see auto_range), it is there even at 0 V:
-// with nothing connected rev1 reads a few mA (-5..+3 seen). It is captured at
-// boot and by the `zero` console command, only with the input below
-// SWEEP_NO_PANEL_MV and a plausible reading (a reversed panel also shows
-// ~0 V but real current), kept in NVS and subtracted from every reading.
+// with nothing connected rev1 reads -2.5 to -6.5 mA. It is captured at every
+// power-up with the panel unplugged (and by the `zero` console command), kept
+// in NVS for boots with a panel attached, and subtracted from every reading.
 
 #define INA_OFFSET_NVS_NS "meas"
 #define INA_OFFSET_NVS_KEY "ina_off_ua"
