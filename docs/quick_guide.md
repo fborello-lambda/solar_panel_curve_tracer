@@ -51,7 +51,7 @@ Wi-Fi.
 - **CURVE CHART**: the last curve on screen. Turning walks the points (V and I shown below);
   **double press** overlays the power curve (mW below); hold to go back.
 - **DYNAMIC LOAD**: manual load. Turning raises or lowers the current drawn from the panel;
-  shows I, power and voltage. Max. 10 % of full scale.
+  shows I, power and voltage. Max. 10 % of full scale and 3 W.
 
 **SYSTEM**: update QR (OTA), reset and deep sleep (wakes with the knob).
 
@@ -72,7 +72,7 @@ Wi-Fi.
 
 ## 5. Range and precision
 
-- Built for a **wide range**: up to about **26 V**, **780 mA** and **5 W** in the load.
+- Built for a **wide range**: up to about **26 V**, **780 mA** and **10 W** in the load during a sweep.
 - **More current, better measurement.** With 40 to 70 mA or more (good light) the curve is
   smooth and accurate.
 - **Small currents** (below about 20 mA): fewer points and a **1 to 2 mA** error.
@@ -93,7 +93,7 @@ Wi-Fi.
   Light it better.
 - **"Panel reversed", red LED**: swap PV+ and PV-.
 - **Curve does not reach 0 V**: the panel exceeds the 780 mA cap.
-- **Sweep stops early**: hit the 5 W limit.
+- **Sweep stops early**: hit the 10 W limit.
 - **Imprecise measurement**: current too small; more light.
 - **Web page is empty**: join the ESP32_PLOT network again.
 

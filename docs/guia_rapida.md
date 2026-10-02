@@ -57,7 +57,7 @@ Menús en inglés; entre paréntesis, su significado.
   (abajo se ven V e I); **doble pulsación** superpone la curva de potencia (abajo, mW);
   mantener para volver.
 - **DYNAMIC LOAD** (carga manual): girar sube o baja la corriente que se toma del panel; muestra
-  I, potencia y tensión. Máx. 10 % de la escala.
+  I, potencia y tensión. Máx. 10 % de la escala y 3 W.
 
 **SYSTEM** (sistema): **OTA** (QR de actualización), **RESET** (reiniciar) y **DEEP SLEEP**
 (bajo consumo; despierta con la perilla). **BACK** = volver.
@@ -79,7 +79,7 @@ Menús en inglés; entre paréntesis, su significado.
 
 ## 5. Rango y precisión
 
-- Diseñado para un **rango amplio**: hasta unos **26 V**, **780 mA** y **5 W** en la carga.
+- Diseñado para un **rango amplio**: hasta unos **26 V**, **780 mA** y **10 W** en la carga durante el barrido.
 - **Más corriente, mejor medición.** Con 40 a 70 mA o más (buena luz) la curva sale fina y
   precisa.
 - **Corrientes chicas** (menos de unos 20 mA): pocos puntos y error de **1 a 2 mA**.
@@ -100,7 +100,7 @@ Menús en inglés; entre paréntesis, su significado.
   0,5 V). Ilumínelo mejor.
 - **"Panel invertido", LED rojo**: intercambie PV+ y PV-.
 - **La curva no llega a 0 V**: el panel supera el tope de 780 mA.
-- **El barrido se corta**: se llegó al límite de 5 W.
+- **El barrido se corta**: se llegó al límite de 10 W.
 - **Medición poco precisa**: corriente muy chica; más luz.
 - **Página web vacía**: vuelva a conectarse a la red ESP32_PLOT.
 
