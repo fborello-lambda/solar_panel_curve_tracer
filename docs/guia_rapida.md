@@ -1,5 +1,5 @@
 ---
-geometry: a4paper, margin=1cm
+geometry: a4paper, margin=0.9cm
 fontsize: 11pt
 mainfont: DejaVu Sans
 header-includes: |
@@ -43,25 +43,31 @@ teléfono por Wi-Fi.
 - **Presionar**: elegir. **Mantener** (0,7 s): volver (en el gráfico).
 - La pantalla se apaga sola tras 60 s sin uso; el primer toque solo la enciende.
 
-**NETWORK**: QR de la red Wi-Fi, QR de la dirección web y QR del repositorio en GitHub (guía en línea).
+Menús en inglés; entre paréntesis, su significado.
 
-**MEASURE**:
+**NETWORK** (red): QR de la red Wi-Fi, QR de la dirección web y QR del repositorio en GitHub
+(guía en línea).
 
-- **CURVE TRACER**: *START/STOP TRACE* inicia o detiene un barrido. *MODE*: **REAL** mide el
-  panel; **DEMO** muestra una curva de ejemplo sin usar el panel.
-- **CURVE CHART**: la última curva en pantalla. Girar recorre los puntos (abajo se ven V e I);
-  **doble pulsación** superpone la curva de potencia (abajo, mW); mantener para volver.
-- **DYNAMIC LOAD**: carga manual. Girar sube o baja la corriente que se toma del panel; muestra
+**MEASURE** (medir):
+
+- **CURVE TRACER** (trazador de curva): *START TRACE* / *STOP TRACE* (iniciar / detener)
+  un barrido. *MODE* (modo): **REAL** mide el panel; **DEMO** muestra una curva de ejemplo sin
+  usar el panel.
+- **CURVE CHART** (gráfico de la curva): la última curva en pantalla. Girar recorre los puntos
+  (abajo se ven V e I); **doble pulsación** superpone la curva de potencia (abajo, mW);
+  mantener para volver.
+- **DYNAMIC LOAD** (carga manual): girar sube o baja la corriente que se toma del panel; muestra
   I, potencia y tensión. Máx. 10 % de la escala.
 
-**SYSTEM**: QR de actualización (OTA), reinicio y bajo consumo (despierta con la perilla).
+**SYSTEM** (sistema): **OTA** (QR de actualización), **RESET** (reiniciar) y **DEEP SLEEP**
+(bajo consumo; despierta con la perilla). **BACK** = volver.
 
 ## 3. Medir desde el teléfono
 
 1. Conéctese a la Wi-Fi **ESP32_PLOT** (sin contraseña).
-2. Abra `http://192.168.4.1` y presione **Start** (o **Stop**).
-3. Se ven la curva, Voc, Isc, Pmax, Vmp e Imp; **CSV** descarga los datos; **Guía** abre la
-   guía completa. Selector ES/EN y tema claro/oscuro.
+2. Abra `http://192.168.4.1` y presione **Iniciar medición** (o **Detener**).
+3. Se ven la curva, Voc, Isc, Pmax, Vmp e Imp; **Descargar CSV** guarda los datos; **Guía** abre
+   la guía completa.
 
 ## 4. Qué hace un barrido (10 a 20 s)
 
