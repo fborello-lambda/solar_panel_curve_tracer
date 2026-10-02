@@ -2,19 +2,27 @@
 
 An ESP32-C3 that traces the I-V curve of a small solar panel: it loads the panel with a
 PWM-controlled electronic load (op-amp VCCS + MOSFET), measures voltage and current with an
-INA219 sensor, and auto-ranges a 20-point sweep spread by arc length along the curve. Results are
+INA219 sensor, and auto-ranges a sweep of up to 40 points spread by arc length along the curve. Results are
 served over the device's own Wi-Fi as a web UI (Chart.js), and a SH1106 OLED with a rotary
 encoder gives a local menu.
 
 <table align="center"><tr>
-<td><img src="imgs/prototype.jpeg" alt="Prototype PCB" width="260"></td>
-<td><img src="imgs/measurement_setup.jpeg" alt="Measurement setup" width="260"></td>
-<td><img src="imgs/web_interface.jpeg" alt="Web interface" width="260"></td>
+<td><img src="imgs/board_rev1.jpeg" alt="Dynamic Load rev1 PCB with the OLED curve chart" width="300"></td>
+<td><img src="imgs/web_interface.png" alt="Web interface showing the DEMO curve" width="460"></td>
 </tr></table>
+
+<details>
+<summary>First perfboard prototype</summary>
+
+<table align="center"><tr>
+<td><img src="imgs/prototype.jpeg" alt="Perfboard prototype" width="300"></td>
+<td><img src="imgs/measurement_setup.jpeg" alt="Measurement setup with the perfboard prototype" width="260"></td>
+</tr></table>
+</details>
 
 ## Quick start
 
-1. Power on the device.
+1. Power on the device with the panel unplugged (it calibrates the current sensor zero), then connect the panel.
 2. Join the Wi-Fi network `ESP32_PLOT` (no password).
 3. Open `http://192.168.4.1` and press **Start**.
 
