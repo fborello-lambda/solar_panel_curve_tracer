@@ -37,6 +37,11 @@ void test_quadrature_ccw_sequence_emits_negative_one_step_per_cycle(void);
 void test_quadrature_bounce_emits_nothing(void);
 void test_quadrature_invalid_jump_ignored(void);
 
+// chart math
+void test_chart_mpp_index_finds_max_power(void);
+void test_chart_scale_maps_and_clamps(void);
+void test_chart_double_press_window(void);
+
 void app_main(void)
 {
     UNITY_BEGIN();
@@ -68,6 +73,9 @@ void app_main(void)
     RUN_TEST(test_quadrature_ccw_sequence_emits_negative_one_step_per_cycle);
     RUN_TEST(test_quadrature_bounce_emits_nothing);
     RUN_TEST(test_quadrature_invalid_jump_ignored);
+    RUN_TEST(test_chart_mpp_index_finds_max_power);
+    RUN_TEST(test_chart_scale_maps_and_clamps);
+    RUN_TEST(test_chart_double_press_window);
 
     int failures = UNITY_END();
 

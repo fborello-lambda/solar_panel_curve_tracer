@@ -20,6 +20,7 @@ typedef enum
     UI_SCREEN_ACTION_QR,
     UI_SCREEN_ACTION_MEASURE,
     UI_SCREEN_ACTION_DYNAMIC_LOAD,
+    UI_SCREEN_ACTION_CHART,
 } ui_screen_t;
 
 typedef enum

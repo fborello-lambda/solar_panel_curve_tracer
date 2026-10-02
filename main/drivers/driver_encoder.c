@@ -39,6 +39,7 @@ typedef struct
     volatile TickType_t last_rot_emit_tick;
     volatile bool sw_stable_high; // debounced button state: true = released (idle, pulled up)
     esp_timer_handle_t sw_timer;
+    esp_timer_handle_t long_timer;
     bool initialized;
 } encoder_state_t;
 
@@ -89,6 +90,26 @@ static void IRAM_ATTR encoder_sw_isr(void *arg)
     esp_timer_start_once(s_encoder.sw_timer, (uint64_t)s_encoder.sw_debounce_ms * 1000ULL);
 }
 
+// One-shot, started on a confirmed press and stopped on the confirmed release.
+// Both callbacks run in the esp_timer task, so they never interleave.
+static void sw_long_timer_cb(void *arg)
+{
+    (void)arg;
+
+    if (s_encoder.sw_stable_high || !s_encoder.queue)
+    {
+        return; // released in the meantime
+    }
+
+    TickType_t now = xTaskGetTickCount();
+    encoder_event_t ev = {
+        .type = ENCODER_EVENT_LONG_PRESS,
+        .position = s_encoder.position,
+        .timestamp_ms = ticks_to_ms(now),
+    };
+    xQueueSend(s_encoder.queue, &ev, 0);
+}
+
 // Runs in the esp_timer task context (not ISR context), so it may use
 // blocking-capable APIs such as xQueueSend.
 static void sw_settle_timer_cb(void *arg)
@@ -124,6 +145,8 @@ static void sw_settle_timer_cb(void *arg)
                 .timestamp_ms = ticks_to_ms(now),
             };
             xQueueSend(s_encoder.queue, &ev, 0);
+            esp_timer_stop(s_encoder.long_timer);
+            esp_timer_start_once(s_encoder.long_timer, (uint64_t)ENCODER_LONG_PRESS_MS * 1000ULL);
         }
     }
     else
@@ -131,6 +154,7 @@ static void sw_settle_timer_cb(void *arg)
         // Confirmed stable low -> high: a release. Update state only, a new
         // press can only be emitted after this.
         s_encoder.sw_stable_high = true;
+        esp_timer_stop(s_encoder.long_timer);
     }
 }
 
@@ -199,7 +223,21 @@ esp_err_t encoder_init(const encoder_config_t *cfg)
         .arg = NULL,
         .name = "enc_sw_settle",
     };
+    const esp_timer_create_args_t long_args = {
+        .callback = sw_long_timer_cb,
+        .arg = NULL,
+        .name = "enc_sw_long",
+    };
     esp_err_t timer_ret = esp_timer_create(&timer_args, &s_encoder.sw_timer);
+    if (timer_ret == ESP_OK)
+    {
+        timer_ret = esp_timer_create(&long_args, &s_encoder.long_timer);
+        if (timer_ret != ESP_OK)
+        {
+            esp_timer_delete(s_encoder.sw_timer);
+            s_encoder.sw_timer = NULL;
+        }
+    }
     if (timer_ret != ESP_OK)
     {
         vQueueDelete(s_encoder.queue);
@@ -212,6 +250,8 @@ esp_err_t encoder_init(const encoder_config_t *cfg)
     {
         esp_timer_delete(s_encoder.sw_timer);
         s_encoder.sw_timer = NULL;
+        esp_timer_delete(s_encoder.long_timer);
+        s_encoder.long_timer = NULL;
         vQueueDelete(s_encoder.queue);
         s_encoder.queue = NULL;
         return ret;

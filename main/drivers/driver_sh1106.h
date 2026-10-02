@@ -37,6 +37,10 @@ esp_err_t sh1106_set_display_on(const sh1106_t *display, bool on);
 void sh1106_fb_clear(uint8_t *fb, bool on);
 void sh1106_fb_set_pixel(uint8_t *fb, int x, int y, bool on);
 void sh1106_fb_draw_rect(uint8_t *fb, int x, int y, int w, int h, bool fill, bool on);
+// Bresenham line. dash == 0 draws it solid; otherwise pixels are lit in runs of
+// `dash` along the x+y diagonal, so the pattern stays continuous across
+// consecutive segments of a polyline.
+void sh1106_fb_draw_line(uint8_t *fb, int x0, int y0, int x1, int y1, int dash, bool on);
 void sh1106_fb_draw_text(uint8_t *fb, int x, int y, const char *txt);
 // Draws txt on a filled bar spanning the full panel width (unlit text on a
 // lit background), for a clearly-selected row on a detent-less menu.

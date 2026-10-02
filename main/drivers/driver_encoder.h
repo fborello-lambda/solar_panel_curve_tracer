@@ -14,11 +14,14 @@ extern "C"
 {
 #endif
 
+#define ENCODER_LONG_PRESS_MS 700
+
 typedef enum
 {
     ENCODER_EVENT_CW = 0,
     ENCODER_EVENT_CCW,
     ENCODER_EVENT_BUTTON,
+    ENCODER_EVENT_LONG_PRESS, /* button still held ENCODER_LONG_PRESS_MS after a confirmed press; once per press */
 } encoder_event_type_t;
 
 typedef struct

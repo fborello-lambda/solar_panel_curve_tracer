@@ -17,6 +17,10 @@
 #include "app/app_tasks.h"
 #include "dynamic_load.h"
 #include "measurement.h"
+#include "ui_chart.h"
+
+#include "chart_math.h"
+#include "db.h"
 
 #include "driver_sh1106.h"
 #include "led_controller.h"
@@ -89,6 +93,14 @@ static bool ui_wake_if_off(void)
     return true;
 }
 
+#define CHART_DOUBLE_PRESS_MS 400
+
+static int s_chart_sel = -1; // -1: start on the MPP at the next render
+static int s_chart_n = 0;    // point count seen by the last render
+static bool s_chart_power = false;
+static bool s_chart_press_valid = false;
+static uint32_t s_chart_last_press_ms = 0;
+
 static void ui_set_screen(ui_screen_t screen)
 {
     g_app.ui_screen = screen;
@@ -111,7 +123,7 @@ static const char *ui_home_title(int index)
 
 static const char *const s_menu_items[HOME_SECTION_COUNT][UI_MENU_MAX_ITEMS] = {
     [HOME_SECTION_NETWORK] = {"SHOW WIFI QR", "SHOW AP IP QR", "SHOW REPO QR", "BACK"},
-    [HOME_SECTION_MEASURE] = {"CURVE TRACER", "DYNAMIC LOAD", "BACK", NULL},
+    [HOME_SECTION_MEASURE] = {"CURVE TRACER", "DYNAMIC LOAD", "CURVE CHART", "BACK"},
     [HOME_SECTION_SYSTEM] = {"OTA", "RESET", "DEEP SLEEP", "BACK"},
 };
 
@@ -204,6 +216,14 @@ void ui_init_state(void)
     app_display_mark_dirty();
 }
 
+// Rotation before the first render of the chart: the cursor is still "on the
+// MPP", whose index the render stored in s_chart_mpp.
+static int s_chart_mpp = 0;
+static int chart_mpp_index_hint(void)
+{
+    return s_chart_mpp;
+}
+
 void ui_on_rotate(int dir)
 {
     ui_mark_activity();
@@ -229,6 +249,17 @@ void ui_on_rotate(int dir)
     if (g_app.ui_screen == UI_SCREEN_ACTION_MEASURE)
     {
         g_app.ui_measure_index = clamp_index(g_app.ui_measure_index + dir, 3);
+        app_display_mark_dirty();
+        return;
+    }
+
+    if (g_app.ui_screen == UI_SCREEN_ACTION_CHART)
+    {
+        if (s_chart_sel < 0)
+        {
+            s_chart_sel = chart_mpp_index_hint();
+        }
+        s_chart_sel = clamp_index(s_chart_sel + dir, s_chart_n);
         app_display_mark_dirty();
         return;
     }
@@ -324,6 +355,15 @@ void ui_on_button(void)
             return;
         }
 
+        if (g_app.ui_home_index == HOME_SECTION_MEASURE && g_app.ui_menu_index == 2)
+        {
+            s_chart_sel = -1;
+            s_chart_power = false;
+            s_chart_press_valid = false;
+            ui_set_screen(UI_SCREEN_ACTION_CHART);
+            return;
+        }
+
         if (g_app.ui_home_index == HOME_SECTION_MEASURE && g_app.ui_menu_index == 0)
         {
             g_app.ui_measure_index = 0;
@@ -373,9 +413,44 @@ void ui_on_button(void)
         return;
     }
 
+    if (g_app.ui_screen == UI_SCREEN_ACTION_CHART)
+    {
+        // Single press: nothing. Two presses within CHART_DOUBLE_PRESS_MS
+        // toggle the power overlay.
+        uint32_t now_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+        if (s_chart_press_valid && chart_is_double_press(s_chart_last_press_ms, now_ms, CHART_DOUBLE_PRESS_MS))
+        {
+            s_chart_power = !s_chart_power;
+            s_chart_press_valid = false;
+            app_display_mark_dirty();
+        }
+        else
+        {
+            s_chart_press_valid = true;
+            s_chart_last_press_ms = now_ms;
+        }
+        return;
+    }
+
     if (g_app.ui_screen == UI_SCREEN_ACTION_DYNAMIC_LOAD)
     {
         dynamic_load_exit();
+        ui_set_screen(UI_SCREEN_MENU);
+    }
+}
+
+// Only the chart screen reacts to a long press (back to the MEASURE menu);
+// everywhere else the BUTTON event at press-down already did the work.
+void ui_on_long_press(void)
+{
+    ui_mark_activity();
+    if (g_app.display_off)
+    {
+        return;
+    }
+
+    if (g_app.ui_screen == UI_SCREEN_ACTION_CHART)
+    {
         ui_set_screen(UI_SCREEN_MENU);
     }
 }
@@ -608,6 +683,21 @@ void ui_render_display_frame(uint8_t *fb)
         sh1106_fb_draw_text(fb, 0, 38, power_line);
         sh1106_fb_draw_text(fb, 0, 48, vbus_line);
         sh1106_fb_draw_text(fb, 0, 56, status_line);
+        return;
+    }
+
+    if (g_app.ui_screen == UI_SCREEN_ACTION_CHART)
+    {
+        float v[DB_MAX_SAMPLES], i[DB_MAX_SAMPLES];
+        size_t n = 0;
+        if (!db_snapshot(v, i, &n, DB_MAX_SAMPLES))
+        {
+            n = 0;
+        }
+        s_chart_n = (int)n;
+        s_chart_mpp = chart_mpp_index(v, i, (int)n);
+        int sel = (s_chart_sel < 0) ? s_chart_mpp : clamp_index(s_chart_sel, (int)n);
+        ui_chart_render(fb, v, i, (int)n, sel, s_chart_power);
         return;
     }
 

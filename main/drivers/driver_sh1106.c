@@ -232,6 +232,38 @@ void sh1106_fb_draw_rect(uint8_t *fb, int x, int y, int w, int h, bool fill, boo
     }
 }
 
+void sh1106_fb_draw_line(uint8_t *fb, int x0, int y0, int x1, int y1, int dash, bool on)
+{
+    int dx = (x1 > x0) ? (x1 - x0) : (x0 - x1);
+    int dy = (y1 > y0) ? (y0 - y1) : (y1 - y0); // negative
+    int sx = (x0 < x1) ? 1 : -1;
+    int sy = (y0 < y1) ? 1 : -1;
+    int err = dx + dy;
+
+    for (;;)
+    {
+        if (dash <= 0 || (((x0 + y0) / dash) & 1) == 0)
+        {
+            sh1106_fb_set_pixel(fb, x0, y0, on);
+        }
+        if (x0 == x1 && y0 == y1)
+        {
+            break;
+        }
+        int e2 = 2 * err;
+        if (e2 >= dy)
+        {
+            err += dy;
+            x0 += sx;
+        }
+        if (e2 <= dx)
+        {
+            err += dx;
+            y0 += sy;
+        }
+    }
+}
+
 static bool glyph_for_char(char c, uint8_t out[5])
 {
     if (c == 'm')
