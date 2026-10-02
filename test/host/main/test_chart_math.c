@@ -17,6 +17,9 @@ void test_chart_scale_maps_and_clamps(void)
     TEST_ASSERT_EQUAL_INT(99, chart_scale(30.0f, 20.0f, 100));
     TEST_ASSERT_EQUAL_INT(0, chart_scale(-1.0f, 20.0f, 100));
     TEST_ASSERT_EQUAL_INT(0, chart_scale(5.0f, 0.0f, 100));
+    TEST_ASSERT_EQUAL_INT(0, chart_scale(__builtin_nanf(""), 20.0f, 100));
+    TEST_ASSERT_EQUAL_INT(0, chart_scale(-__builtin_inff(), 20.0f, 100));
+    TEST_ASSERT_EQUAL_INT(99, chart_scale(__builtin_inff(), 20.0f, 100));
 }
 
 void test_chart_double_press_window(void)

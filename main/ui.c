@@ -99,6 +99,9 @@ static int s_chart_sel = -1; // -1: start on the MPP at the next render
 static int s_chart_n = 0;    // point count seen by the last render
 static bool s_chart_power = false;
 static bool s_chart_press_valid = false;
+// A long press only counts when its own press was seen on the chart screen:
+// the press that opened the screen, if held, would otherwise close it again.
+static bool s_chart_long_armed = false;
 static uint32_t s_chart_last_press_ms = 0;
 
 static void ui_set_screen(ui_screen_t screen)
@@ -362,6 +365,7 @@ void ui_on_button(void)
             s_chart_sel = -1;
             s_chart_power = false;
             s_chart_press_valid = false;
+            s_chart_long_armed = false;
             ui_set_screen(UI_SCREEN_ACTION_CHART);
             return;
         }
@@ -420,6 +424,7 @@ void ui_on_button(void)
         // Single press: nothing. Two presses within CHART_DOUBLE_PRESS_MS
         // toggle the power overlay.
         uint32_t now_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+        s_chart_long_armed = true;
         if (s_chart_press_valid && chart_is_double_press(s_chart_last_press_ms, now_ms, CHART_DOUBLE_PRESS_MS))
         {
             s_chart_power = !s_chart_power;
@@ -451,8 +456,9 @@ void ui_on_long_press(void)
         return;
     }
 
-    if (g_app.ui_screen == UI_SCREEN_ACTION_CHART)
+    if (g_app.ui_screen == UI_SCREEN_ACTION_CHART && s_chart_long_armed)
     {
+        s_chart_long_armed = false;
         ui_set_screen(UI_SCREEN_MENU);
     }
 }

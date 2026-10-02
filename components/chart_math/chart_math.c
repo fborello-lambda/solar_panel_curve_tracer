@@ -19,6 +19,14 @@ int chart_scale(float value, float vmax, int span_px)
     {
         return 0;
     }
+    if (!(value > 0.0f))
+    {
+        return 0; // also NaN and -inf, which must not reach the float to int cast
+    }
+    if (!(value < vmax))
+    {
+        return span_px - 1; // also +inf
+    }
     int p = (int)(value / vmax * (float)(span_px - 1) + 0.5f);
     if (p < 0)
     {
