@@ -60,7 +60,7 @@ Menús en inglés; entre paréntesis, su significado.
   (abajo se ven V e I); **doble pulsación** superpone la curva de potencia (abajo, mW);
   mantener para volver.
 - **DYNAMIC LOAD** (carga manual): girar mueve la carga en 10 pasos, de 0 a la Isc del último
-  barrido. **Doble pulsación**: mide de nuevo el rango (otra luz, otro panel, una fuente).
+  barrido (sin barrido previo: hasta el máximo). **Doble pulsación**: mide de nuevo el rango (otra luz, otro panel, una fuente).
   Mantener para volver. Máx. 3 W.
 
 **SYSTEM** (sistema): **OTA** (QR de actualización), **RESET** (reiniciar) y **DEEP SLEEP**

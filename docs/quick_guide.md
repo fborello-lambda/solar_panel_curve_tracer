@@ -54,7 +54,7 @@ Measures the current-voltage (I-V) curve of a solar panel and computes Voc, Isc 
 - **CURVE CHART**: the last curve on screen. Turning walks the points (V and I shown below);
   **double press** overlays the power curve (mW below); hold to go back.
 - **DYNAMIC LOAD**: manual load. Turning raises or lowers the load in 10 steps, from 0 to the
-  last sweep's Isc; shows I, power and voltage. **Double press**: re-measure the range with
+  last sweep's Isc (no sweep yet: up to the maximum); shows I, power and voltage. **Double press**: re-measure the range with
   whatever is connected (other light, another panel or a supply). Hold to go back. Max. 3 W.
 
 **SYSTEM**: update QR (OTA), reset and deep sleep (wakes with the knob).
