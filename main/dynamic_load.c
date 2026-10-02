@@ -87,18 +87,9 @@ void dynamic_load_update_measured(void)
     float avg_bus_mV = 0.0f, raw_mA = 0.0f;
     if (measurement_sample(&avg_bus_mV, &raw_mA))
     {
-        // Same zero-load correction as the sweep (see auto_range in
-        // measurement.c): at duty 0 nothing flows, so the reading is the
-        // INA219's voltage-proportional error; recalibrate it there and
-        // subtract err * V from every reading.
-        // Only once the load has been at 0 long enough for the RC filter to
-        // drain, otherwise a still-flowing current is mistaken for error.
+        // Same correction as the sweep: raw - offset - k * V (see measurement.c).
         float zero_mA = raw_mA - measurement_ina_offset_mA();
-        if (measurement_ina_k_mA_per_V() > 0.0f)
-            g_app.ina_err_mA_per_V = measurement_ina_k_mA_per_V();
-        else if (g_app.dynamic_duty_steps == 0 && avg_bus_mV >= 500.0f &&
-            (now - g_app.dynamic_last_adjust_tick) >= pdMS_TO_TICKS(DYNAMIC_LOAD_ZERO_CAL_SETTLE_MS))
-            g_app.ina_err_mA_per_V = zero_mA / (avg_bus_mV / 1000.0f);
+        g_app.ina_err_mA_per_V = measurement_ina_k_mA_per_V();
         float i_mA = zero_mA - g_app.ina_err_mA_per_V * (avg_bus_mV / 1000.0f);
 
         g_app.dynamic_measured_mA = (i_mA > 0.0f) ? i_mA : 0.0f;

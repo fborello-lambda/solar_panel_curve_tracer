@@ -109,9 +109,9 @@ Partition table offset: `0xD000` (pushed up to fit the secure-boot-signed bootlo
   the steep part near Voc, the knee, and the flat part near Isc all get points for any Isc, from a few mA up to the
   duty cap. Duty only ever steps up (the RC input filter drains slowly, so a descending step reads stale current).
   Current readings are corrected as `raw - offset - k * V` (see LESSONS.md): `offset` is the INA219 zero offset,
-  re-measured at every power-up with the panel unplugged and kept in NVS; `k` (~3.2 mA/V on rev1) is calibrated once
-  on the bench with the `kcal` console command and kept in NVS. Without `kcal`, k is measured at duty 0 every
-  sweep, which also hides the load's real idle current (~4 mA, op-amp offset). The dynamic load screen uses the
+  re-measured at every power-up with the panel unplugged and kept in NVS; `k` defaults to 3.20 mA/V (set by the
+  design: R15 / (INA219 bus input ~320 kOhm x R12) = 3.13, and the first board measured 3.20) and can be refined per
+  board with the `kcal` console command (NVS). The load's real idle current (~4 mA, op-amp offset) is reported. The dynamic load screen uses the
   same correction and averages over the same 100 ms window. The sweep hard-stops (aborts, keeping points already recorded) if
   measured power reaches the shared 5000 mW power cap.
 

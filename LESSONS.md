@@ -75,9 +75,10 @@ a ~15 mA panel:
 - **INA219 zero offset (measurement).** With nothing connected the INA219 reads -2.5 to -6.5 mA.
 
 **Firmware:** the zero offset is re-measured at every power-up with the panel unplugged (stored in
-NVS). The INA219 per-volt error is calibrated once on the bench (`kcal`, supply in CV with a
-multimeter in series) instead of at duty 0 every sweep, so the idle current is reported as a real
-point instead of being zeroed. Result: idle point and Isc within ~1.5 mA of the multimeter.
+NVS). The INA219 per-volt error is a design constant, R15 / (bus input ~320 kOhm x R12) = 3.13 mA/V;
+the first board measured 3.20, used as the default for every rev1 board (`kcal` with a supply and a
+multimeter refines it per board). The idle current is then reported as a real point instead of
+being zeroed. Result: idle point and Isc within ~1.5 mA of the multimeter.
 
 **Next revision:** a zero-drift op-amp (e.g. MCP6V02, same footprint, a few uV offset) makes the idle
 current ~0; or bias the op-amp's - input slightly positive so the load is truly off at duty 0.

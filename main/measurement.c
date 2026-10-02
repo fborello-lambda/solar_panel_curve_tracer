@@ -51,10 +51,12 @@ static bool measurement_start_locked(measurement_refuse_reason_t *out_reason);
 static bool measurement_stop_locked(void);
 
 static float s_ina_offset_mA = 0.0f; // INA219 fixed zero offset, see ina_offset_capture()
-// INA219 voltage-proportional error, calibrated once on the bench (`kcal`).
-// 0 = not calibrated: fall back to measuring it at duty 0 every sweep, which
-// also hides the load's real idle current (see measurement_calibrate_k).
-static float s_ina_k_mA_per_V = 0.0f;
+// INA219 voltage-proportional error. It is set by the design: the bus input
+// current (~V / 320 kOhm) through R15 (10 Ohm) read across R12 (10 mOhm) gives
+// ~3.13 mA/V, and the first rev1 board measured 3.20. That default serves any
+// rev1 board; `kcal` refines it per board (stored in NVS).
+#define INA_K_DEFAULT_MA_PER_V 3.20f
+static float s_ina_k_mA_per_V = INA_K_DEFAULT_MA_PER_V;
 static void ina_offset_load(void);
 static void ina_offset_capture(float raw_mA);
 static void dummy_producer_task(void *arg);
@@ -589,12 +591,10 @@ static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, 
     // refreshed here: a panel connected backwards also reads ~0 V, but its
     // current flows through the MOSFET body diode, so "0 V" does not prove
     // that nothing flows (see measurement_capture_zero / boot capture).
-    // With a bench-calibrated k the duty-0 reading is used as is: whatever
-    // is left after removing offset + k*V is the load's real idle current
-    // (op-amp offset keeping the MOSFET slightly on) and is reported.
-    float err_mA_per_V = (s_ina_k_mA_per_V > 0.0f) ? s_ina_k_mA_per_V
-                         : (voc_v >= 0.5f)        ? (zero_i_mA / voc_v)
-                                                  : 0.0f;
+    // The duty-0 reading is used as is: whatever is left after removing
+    // offset + k*V is the load's real idle current (op-amp offset keeping
+    // the MOSFET slightly on) and is reported, not zeroed.
+    float err_mA_per_V = s_ina_k_mA_per_V;
     *out_err_mA_per_V = err_mA_per_V;
     g_app.ina_err_mA_per_V = err_mA_per_V;
     ESP_LOGI(TAG, "auto_range: zero-load reading %.2f mA at %.3f V -> current error %.3f mA/V",
