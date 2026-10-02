@@ -163,7 +163,14 @@ static void handle_line(char *line)
         if (!a)
             ESP_LOGW(TAG, "usage: kcal <idle mA read by the multimeter>");
         else
-            measurement_calibrate_k(strtof(a, NULL));
+        {
+            char *end = NULL;
+            float mA = strtof(a, &end);
+            if (end == a || *end != '\0')
+                ESP_LOGW(TAG, "kcal: '%s' is not a number", a);
+            else
+                measurement_calibrate_k(mA);
+        }
     }
     else if (strcmp(cmd, "raw") == 0)
     {

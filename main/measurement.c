@@ -1,6 +1,7 @@
 #include "measurement.h"
 
 #include <math.h>
+#include <math.h>
 #include <stdio.h>
 
 #include <esp_log.h>
@@ -37,7 +38,9 @@ static const char *TAG = "MEASURE";
 #define SWEEP_NO_LOAD_DUTY 64            // by this duty the load must draw current...
 #define SWEEP_NO_LOAD_MIN_MA 2.0f        // ...at least this much, or the load is broken
 #define INA_OFFSET_MAX_MA 8.0f           // larger zero readings are real current, never offset
-#define SWEEP_REVERSED_MIN_MA 2.0f       // current at ~0 V above this (after offset): panel reversed
+#define SWEEP_REVERSED_MIN_MA 5.0f       // current at ~0 V above this (after offset): panel reversed.
+                                         // Above the 4 mA spread seen in the offset between runs, so
+                                         // a stale offset with no panel reads as no_panel, not reversed
 #define SWEEP_NO_PANEL_MV 500.0f         // input below this with no load: nothing can flow
 #define SWEEP_STOP_POLL_MS 25            // chunk size for waits, so stop is honored quickly
 
@@ -442,6 +445,8 @@ bool measurement_capture_zero(void)
         return false;
     pwm_controller_set_duty_in_res_steps(0);
     vTaskDelay(pdMS_TO_TICKS(SWEEP_SETTLE_MS));
+    if (g_app.measurement_running || g_app.dynamic_load_active)
+        return false; // a sweep started during the settle wait
     if (!measurement_sample(&bus_mV, &raw_mA) || bus_mV >= SWEEP_NO_PANEL_MV ||
         raw_mA <= -INA_OFFSET_MAX_MA || raw_mA >= INA_OFFSET_MAX_MA)
     {
@@ -455,16 +460,29 @@ bool measurement_capture_zero(void)
 bool measurement_calibrate_k(float real_idle_mA)
 {
     float bus_mV = 0.0f, raw_mA = 0.0f;
+    if (!isfinite(real_idle_mA) || real_idle_mA < 0.0f || real_idle_mA > INA_OFFSET_MAX_MA)
+    {
+        ESP_LOGW(TAG, "kcal: idle current must be 0..%.0f mA", (double)INA_OFFSET_MAX_MA);
+        return false;
+    }
     if (g_app.measurement_running || g_app.dynamic_load_active || !g_app.pwm_ready)
         return false;
     pwm_controller_set_duty_in_res_steps(0);
     vTaskDelay(pdMS_TO_TICKS(SWEEP_FIRST_POINT_SETTLE_MS));
+    if (g_app.measurement_running || g_app.dynamic_load_active)
+        return false; // a sweep started during the settle wait
     if (!measurement_sample(&bus_mV, &raw_mA) || bus_mV < 2000.0f)
     {
         ESP_LOGW(TAG, "kcal: need a source of a few volts on the input (got %.0f mV)", (double)bus_mV);
         return false;
     }
     float k = (raw_mA - s_ina_offset_mA - real_idle_mA) / (bus_mV / 1000.0f);
+    if (!isfinite(k) || k <= 0.0f || k > 50.0f)
+    {
+        ESP_LOGW(TAG, "kcal: implausible k %.3f mA/V (raw %.2f, offset %.2f), not stored", (double)k,
+                 (double)raw_mA, (double)s_ina_offset_mA);
+        return false;
+    }
     s_ina_k_mA_per_V = k;
     ESP_LOGI(TAG, "kcal: raw %.2f mA at %.3f V, offset %.2f, real idle %.2f -> k %.3f mA/V", (double)raw_mA,
              (double)(bus_mV / 1000.0f), (double)s_ina_offset_mA, (double)real_idle_mA, (double)k);
