@@ -124,9 +124,13 @@ static const char *ui_home_title(int index)
 
 #define UI_MENU_MAX_ITEMS 4
 
+// MEASURE menu item indices (must match s_menu_items below).
+#define MEASURE_ITEM_CURVE_CHART 1
+#define MEASURE_ITEM_DYNAMIC_LOAD 2
+
 static const char *const s_menu_items[HOME_SECTION_COUNT][UI_MENU_MAX_ITEMS] = {
     [HOME_SECTION_NETWORK] = {"SHOW WIFI QR", "SHOW AP IP QR", "SHOW REPO QR", "BACK"},
-    [HOME_SECTION_MEASURE] = {"CURVE TRACER", "DYNAMIC LOAD", "CURVE CHART", "BACK"},
+    [HOME_SECTION_MEASURE] = {"CURVE TRACER", "CURVE CHART", "DYNAMIC LOAD", "BACK"}, // see MEASURE_ITEM_*
     [HOME_SECTION_SYSTEM] = {"OTA", "RESET", "DEEP SLEEP", "BACK"},
 };
 
@@ -346,7 +350,7 @@ void ui_on_button(void)
             return;
         }
 
-        if (g_app.ui_home_index == HOME_SECTION_MEASURE && g_app.ui_menu_index == 1)
+        if (g_app.ui_home_index == HOME_SECTION_MEASURE && g_app.ui_menu_index == MEASURE_ITEM_DYNAMIC_LOAD)
         {
             measurement_request(false);
             if (dynamic_load_enter())
@@ -360,7 +364,7 @@ void ui_on_button(void)
             return;
         }
 
-        if (g_app.ui_home_index == HOME_SECTION_MEASURE && g_app.ui_menu_index == 2)
+        if (g_app.ui_home_index == HOME_SECTION_MEASURE && g_app.ui_menu_index == MEASURE_ITEM_CURVE_CHART)
         {
             s_chart_sel = -1;
             s_chart_power = false;
