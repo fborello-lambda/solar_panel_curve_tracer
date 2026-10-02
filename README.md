@@ -18,9 +18,10 @@ encoder gives a local menu.
 2. Join the Wi-Fi network `ESP32_PLOT` (no password).
 3. Open `http://192.168.4.1` and press **Start**.
 
-A printable, two-page A4 quick guide (Spanish + English) is at
-[docs/quick_guide.pdf](docs/quick_guide.pdf); the same content is served on the device itself at
-`http://192.168.4.1/guide`, and reachable from the OLED menu at **NETWORK > SHOW GUIDE QR**.
+Printable one-page A4 quick guides: [docs/guia_rapida.pdf](docs/guia_rapida.pdf) (Spanish) and
+[docs/quick_guide.pdf](docs/quick_guide.pdf) (English), built from their `.md` sources with
+`docs/build_guide.sh`. The same content is served on the device itself at
+`http://192.168.4.1/guide`; the OLED menu **NETWORK > SHOW REPO QR** links to this repository.
 
 ## Updating the firmware (OTA)
 

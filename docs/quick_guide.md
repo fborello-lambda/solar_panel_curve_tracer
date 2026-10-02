@@ -1,185 +1,113 @@
 ---
-geometry: a4paper, margin=1.3cm
-fontsize: 9pt
+geometry: a4paper, margin=1cm
+fontsize: 11pt
 mainfont: DejaVu Sans
 header-includes: |
   \usepackage{graphicx}
+  \usepackage{multicol}
   \usepackage{titlesec}
   \usepackage{enumitem}
-  \usepackage{float}
-  \usepackage{caption}
-  \captionsetup{labelformat=empty}
-  \floatplacement{figure}{H}
-  \setlength{\textfloatsep}{1pt}
-  \setlength{\intextsep}{0pt}
-  \setlength{\floatsep}{1pt}
-  \setlength{\abovecaptionskip}{1pt}
-  \setlength{\belowcaptionskip}{0pt}
-  \titlespacing*{\section}{0pt}{2pt}{1pt}
-  \titlespacing*{\subsection}{0pt}{2pt}{1pt}
-  \setlist{itemsep=0pt,parsep=0pt,topsep=1pt,partopsep=0pt}
-  \setlength{\parskip}{1pt}
+  \titleformat{\section}{\large\bfseries}{}{0pt}{}
+  \titleformat{\subsection}{\normalsize\bfseries}{}{0pt}{}
+  \titlespacing*{\section}{0pt}{0pt}{2pt}
+  \titlespacing*{\subsection}{0pt}{4pt}{1pt}
+  \setlist{itemsep=0pt,parsep=0pt,topsep=1pt,partopsep=0pt,leftmargin=12pt}
+  \setlength{\parskip}{1.5pt}
   \setlength{\parindent}{0pt}
-  \renewcommand{\arraystretch}{0.85}
-  \linespread{0.93}
+  \setlength{\columnsep}{14pt}
+  \renewcommand{\arraystretch}{0.9}
   \pagenumbering{gobble}
+  \newcommand{\bmc}{\begin{multicols}{2}}
+  \newcommand{\emc}{\end{multicols}}
 ---
 
-# Guía rápida (Español)
+# I-V curve tracer: quick guide
 
-## Qué hace
+Measures the current-voltage (I-V) curve of a solar panel and computes Voc, Isc and the maximum
+power point (MPP). Works without internet: use the OLED screen and the knob, or a phone over
+Wi-Fi.
 
-Este dispositivo mide y traza la curva I-V (corriente vs. tensión) de un
-panel solar pequeño, calculando el punto de máxima potencia (MPP).
+\bmc
 
-## Seguridad
+## 1. Power on and connect
 
-- El MOSFET de carga se calienta durante el barrido: es normal.
-- El barrido se detiene automáticamente si la potencia llega a 5 W.
-- La carga está limitada a unos 780 mA (20% de la escala completa).
-- Este prototipo no tiene interruptor de encendido: desconecte la batería
-  para apagarlo.
+1. Power on **with the panel unplugged**: at boot the current sensor zero is calibrated.
+2. Connect the panel: positive to **PV+**, negative to **PV-**.
+3. **Green** LED = measuring. **Red** LED = fault (no panel, reversed panel or load not
+   responding); it clears when a new measurement starts.
 
-## Conectar el panel y encender
+## 2. Knob and menus (OLED screen)
 
-- Encienda primero **sin el panel conectado**: al arrancar se calibra el cero del sensor.
-- Luego conecte el panel: positivo a **PV+**, negativo a **PV-**.
+- **Turn**: move the selection (stops at the first and last item).
+- **Press**: select. **Hold** (0.7 s): go back (in the chart).
+- The screen turns off after 60 s idle; the first touch only wakes it.
 
-## Medir desde la pantalla OLED
+**NETWORK**: Wi-Fi QR, web address QR and GitHub repository QR (online guide).
 
-1. Gire el encoder para ir a **MEASURE**, presione para entrar.
-2. Seleccione **CURVE TRACER**, presione para entrar.
-3. Seleccione **START TRACE** y presione para iniciar el barrido.
-4. Girar mueve la selección; presionar confirma.
+**MEASURE**:
 
-## Medir desde un teléfono o laptop
+- **CURVE TRACER**: *START/STOP TRACE* starts or stops a sweep. *MODE*: **REAL** measures the
+  panel; **DEMO** shows an example curve without using the panel.
+- **CURVE CHART**: the last curve on screen. Turning walks the points (V and I shown below);
+  **double press** overlays the power curve (mW below); hold to go back.
+- **DYNAMIC LOAD**: manual load. Turning raises or lowers the current drawn from the panel;
+  shows I, power and voltage. Max. 10 % of full scale.
 
-1. Conéctese a la red Wi-Fi **ESP32_PLOT** (sin contraseña).
-2. Abra `http://192.168.4.1` en el navegador.
-3. Presione **Start** para iniciar el barrido y **Stop** para detenerlo
-   (selector de idioma ES/EN y tema claro/oscuro incluidos).
-4. Guía completa: `http://192.168.4.1/guide`, u OLED **NETWORK > SHOW GUIDE QR**.
+**SYSTEM**: update QR (OTA), reset and deep sleep (wakes with the knob).
 
-## Qué sucede durante un barrido
+## 3. Measuring from a phone
 
-1. Se mide la tensión de circuito abierto (Voc).
-2. Se busca automáticamente el rango de corriente adecuado.
-3. Se registran hasta 40 puntos, repartidos a lo largo de toda la
-   curva.
-4. El barrido completo toma entre 10 y 20 segundos.
+1. Join the Wi-Fi **ESP32_PLOT** (no password).
+2. Open `http://192.168.4.1` and press **Start** (or **Stop**).
+3. Shows the curve, Voc, Isc, Pmax, Vmp and Imp; **CSV** downloads the data; **Guide** opens the
+   full guide. ES/EN switch and light/dark theme.
 
-## Leer el resultado
+## 4. What a sweep does (10 to 20 s)
 
-- **Voc**: tensión de circuito abierto.
-- **Isc**: corriente de cortocircuito.
-- **MPP**: punto de máxima potencia (tensión y corriente).
-- La forma general de la curva indica el estado del panel.
-- Setup de la práctica de laboratorio: Isc aprox. 50 mA, resolución aprox. 1 mA.
+1. Measures the open-circuit voltage.
+2. Finds the current range by itself (nothing to configure).
+3. Takes up to **40 points** along the whole curve and stops at Isc.
 
-\begin{center}\includegraphics[width=0.34\textwidth]{docs/img/iv_example.png}\\[-2pt]{\small Ejemplo de curva I-V}\end{center}
-\vspace{-14pt}
+\columnbreak
 
-## Consejos
+## 5. Range and precision
 
-- Mantenga la iluminación estable durante el barrido.
-- No mueva ni tape el panel mientras mide.
-- El parpadeo de lámparas se promedia automáticamente, no afecta la medida.
+- Built for a **wide range**: up to about **26 V**, **780 mA** and **5 W** in the load.
+- **More current, better measurement.** With 40 to 70 mA or more (good light) the curve is
+  smooth and accurate.
+- **Small currents** (below about 20 mA): fewer points and a **1 to 2 mA** error.
+- The load never turns fully off: it draws about **4 mA** even at rest. So the first point reads
+  about 4 mA, and a dim panel's "no load" voltage reads lower than a multimeter on the bare
+  panel. That is what is really being measured.
 
-## Solución de problemas
+## 6. Tips
 
-| Problema | Causa probable |
-|---|---|
-| No se registran puntos | Voc < 0.5 V: panel desconectado u oscuridad |
-| La curva no llega a 0 V | El panel supera el límite de carga del 20% |
-| El barrido se detiene antes | Se alcanzó el límite de seguridad de 5 W |
-| La página web está vacía | Reconéctese a la red Wi-Fi ESP32_PLOT |
+- Even, steady light; do not move or cover the panel during the sweep.
+- To lower the current, shade the **whole** panel evenly (paper or cloth), never just a few
+  cells.
+- Lamp flicker is averaged out automatically.
 
-## Actualizar firmware, bajo consumo y guía en línea
+## 7. Troubleshooting
 
-- **OTA**: descargue `app-standard.bin` de la última versión en GitHub,
-  conéctese a **ESP32_PLOT**, abra `http://192.168.4.1/ota` (o QR en OLED
-  **SYSTEM > OTA**), suba el archivo y espere el reinicio (~30 s).
-- **Bajo consumo**: OLED **SYSTEM > DEEP SLEEP**; despierta con el botón
-  del encoder.
-- **Guía en línea** (QR a la derecha): github.com/fborello-lambda/solar\_panel\_curve\_tracer
-  \raisebox{-0.9\height}{\includegraphics[width=0.07\textwidth]{docs/img/guide_qr.png}}
+- **"No panel detected", red LED**: panel unplugged or **too little light** (below 0.5 V).
+  Light it better.
+- **"Panel reversed", red LED**: swap PV+ and PV-.
+- **Curve does not reach 0 V**: the panel exceeds the 780 mA cap.
+- **Sweep stops early**: hit the 5 W limit.
+- **Imprecise measurement**: current too small; more light.
+- **Web page is empty**: join the ESP32_PLOT network again.
 
-\newpage
-
-# Quick Guide (English)
-
-## What it does
-
-This device measures and traces the I-V curve (current vs. voltage) of a
-small solar panel, computing the maximum power point (MPP).
-
-## Safety
+## 8. Safety and updates
 
 - The load MOSFET heats up during a sweep: this is normal.
-- The sweep aborts automatically if power reaches 5 W.
-- The load is capped at about 780 mA (20% of full scale).
-- This prototype has no power switch: unplug the battery to turn it off.
+- No power switch: unplug the battery to turn it off.
+- **Update**: download `app-standard.bin` from the latest GitHub release, join ESP32_PLOT, open
+  `http://192.168.4.1/ota` (or the QR in **SYSTEM > OTA**) and upload it. It is a single file;
+  it reboots on its own in about 30 s.
 
-## Connecting the panel and powering on
+\begin{center}
+\includegraphics[width=0.12\textwidth]{docs/img/guide_qr.png}\\
+{\small Online guide}
+\end{center}
 
-- Power on first **with the panel unplugged**: the sensor zero is calibrated at boot.
-- Then connect the panel: positive to **PV+**, negative to **PV-**.
-
-## Measuring from the OLED
-
-1. Turn the encoder to **MEASURE**, press to select.
-2. Select **CURVE TRACER**, press to enter.
-3. Select **START TRACE** and press to begin the sweep.
-4. Turning navigates; pressing selects.
-
-## Measuring from a phone or laptop
-
-1. Connect to Wi-Fi network **ESP32_PLOT** (no password).
-2. Open `http://192.168.4.1` in a browser.
-3. Press **Start** to begin the sweep and **Stop** to end it (ES/EN
-   language switch and light/dark theme included).
-4. Full on-device guide: `http://192.168.4.1/guide`, or OLED
-   **NETWORK > SHOW GUIDE QR**.
-
-## What happens during a sweep
-
-1. Open-circuit voltage (Voc) is measured.
-2. The current range is found automatically.
-3. Up to 40 points are recorded, spread along the whole curve shape.
-4. A full sweep takes about 10 to 20 seconds.
-
-## Reading the result
-
-- **Voc**: open-circuit voltage.
-- **Isc**: short-circuit current.
-- **MPP**: maximum power point (voltage and current).
-- Overall curve shape indicates the panel's condition.
-- Lab practice setup: Isc about 50 mA, resolution about 1 mA.
-
-\begin{center}\includegraphics[width=0.34\textwidth]{docs/img/iv_example.png}\\[-2pt]{\small Example I-V curve}\end{center}
-\vspace{-14pt}
-
-## Tips
-
-- Keep lighting steady during the sweep.
-- Do not move or shade the panel while measuring.
-- Flickering lamps are averaged out automatically; no need to worry.
-
-## Troubleshooting
-
-| Problem | Likely cause |
-|---|---|
-| No points recorded | Voc < 0.5 V: panel disconnected or dark |
-| Curve does not reach 0 V | Panel is stronger than the 20% load cap |
-| Sweep stopped early | Hit the 5 W safety limit |
-| Web page is empty | Reconnect to the ESP32_PLOT Wi-Fi network |
-
-## Updating firmware, deep sleep and online guide
-
-- **OTA**: download `app-standard.bin` from the latest GitHub release,
-  connect to **ESP32_PLOT**, open `http://192.168.4.1/ota` (or QR at OLED
-  **SYSTEM > OTA**), upload the file, and wait for the reboot (~30 s).
-- **Deep sleep**: OLED **SYSTEM > DEEP SLEEP**; wakes up with a press of
-  the encoder button.
-- **Online guide** (QR on the right): github.com/fborello-lambda/solar\_panel\_curve\_tracer
-  \raisebox{-0.9\height}{\includegraphics[width=0.07\textwidth]{docs/img/guide_qr.png}}
+\emc
