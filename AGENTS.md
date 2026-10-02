@@ -97,6 +97,11 @@ Partition table offset: `0xD000` (pushed up to fit the secure-boot-signed bootlo
   the selected row inverted with a "N/total" position hint. The OLED blanks itself (`0xAE`) after
   `OLED_IDLE_TIMEOUT_S` (default 60 s) of no encoder activity, except on the dynamic load screen; the
   first encoder event after that only wakes the panel and is otherwise swallowed.
+- **Curve chart**: MEASURE > CURVE CHART plots the last I-V curve (`db_snapshot`) on the OLED (`main/ui_chart.c`,
+  pure math in `components/chart_math`). The cursor starts at the MPP and the encoder moves it (clamped); the footer shows
+  the point's V and mA. A double press (two BUTTON events within 400 ms, timed in `ui.c`) toggles a dashed P(V) overlay and
+  mW footer; a single press does nothing. A long press (button held 700 ms, `ENCODER_EVENT_LONG_PRESS` from a one-shot
+  esp_timer in `driver_encoder.c`) returns to the MEASURE menu; other screens ignore it.
 - **Dynamic load**: encoder adjusts PWM setpoint live, capped at `DYNAMIC_LOAD_DUTY_MAX_PERCENT` (10% duty). It
   shares the same `LOAD_POWER_LIMIT_MW` (5000 mW) power cap as the sweep, with a hysteresis margin
   (`LOAD_POWER_NEAR_MARGIN_MW`) before backing off duty.

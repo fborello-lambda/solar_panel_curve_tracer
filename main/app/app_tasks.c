@@ -60,7 +60,7 @@ static void display_task(void *arg)
     {
         ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(250));
 
-        if (g_app.ui_screen == UI_SCREEN_ACTION_MEASURE)
+        if (g_app.ui_screen == UI_SCREEN_ACTION_MEASURE || g_app.ui_screen == UI_SCREEN_ACTION_CHART)
         {
             // Keep START/STOP state fresh even when producer changes state asynchronously.
             g_app.display_dirty = true;
@@ -211,6 +211,11 @@ static void encoder_ui_task(void *arg)
         {
             ESP_LOGI(TAG, "ENCODER: CCW pos=%ld t=%lu", (long)ev.position, (unsigned long)ev.timestamp_ms);
             ui_on_rotate(-1);
+        }
+        else if (ev.type == ENCODER_EVENT_LONG_PRESS)
+        {
+            ESP_LOGI(TAG, "ENCODER: LONG_PRESS t=%lu", (unsigned long)ev.timestamp_ms);
+            ui_on_long_press();
         }
         else
         {

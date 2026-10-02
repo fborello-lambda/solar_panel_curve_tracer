@@ -4,6 +4,7 @@ set(SRCS
     "measurement.c"
     "dynamic_load.c"
     "ui.c"
+    "ui_chart.c"
 )
 file(GLOB_RECURSE LIB_SRCS  "${CMAKE_CURRENT_SOURCE_DIR}/drivers/*.c"
                             "${CMAKE_CURRENT_SOURCE_DIR}/utils/*.c"
