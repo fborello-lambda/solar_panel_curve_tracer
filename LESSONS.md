@@ -62,6 +62,26 @@ separate VBUS pin wired straight to VIN, so the bus input current never crosses 
 
 Rule: every uA through a 10 Ohm filter reads as 1 mA on a 10 mOhm shunt.
 
+## The load never fully turns off: MCP6002 offset and INA219 zero offset
+
+Two small errors that only matter at low currents, both found by comparing against a multimeter on
+a ~15 mA panel:
+
+- **Idle load current (real).** The load is a linear current sink: the op-amp (U1, MCP6002) drives the
+  MOSFET so the voltage on R13 (0.1 Ohm) matches its + input. At duty 0 that input is 0 V, but the
+  op-amp's input offset (spec up to +-4.5 mV) is still regulated across R13: here ~0.4 mV, so the
+  MOSFET keeps sinking 3.5-4.3 mA. It drifts with temperature. On a weak panel (Isc ~15 mA) that pulls
+  the "open-circuit" voltage from 15 V down to 11 V, so the board cannot show the true Voc.
+- **INA219 zero offset (measurement).** With nothing connected the INA219 reads -2.5 to -6.5 mA.
+
+**Firmware:** the zero offset is re-measured at every power-up with the panel unplugged (stored in
+NVS). The INA219 per-volt error is calibrated once on the bench (`kcal`, supply in CV with a
+multimeter in series) instead of at duty 0 every sweep, so the idle current is reported as a real
+point instead of being zeroed. Result: idle point and Isc within ~1.5 mA of the multimeter.
+
+**Next revision:** a zero-drift op-amp (e.g. MCP6V02, same footprint, a few uV offset) makes the idle
+current ~0; or bias the op-amp's - input slightly positive so the load is truly off at duty 0.
+
 ## Secure Boot
 
 Secure Boot on ESP32 burns the public key digest into eFuses permanently. Once enabled it cannot be disabled, and flashing any firmware signed with a different key will cause the device to boot-loop and become unrecoverable. Losing the private signing key bricks the device.

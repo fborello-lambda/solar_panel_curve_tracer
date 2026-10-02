@@ -108,10 +108,11 @@ Partition table offset: `0xD000` (pushed up to fit the secure-boot-signed bootlo
   along the curve (V/Voc, I/Isc), estimating the local slope and measured current gain from the last two points so
   the steep part near Voc, the knee, and the flat part near Isc all get points for any Isc, from a few mA up to the
   duty cap. Duty only ever steps up (the RC input filter drains slowly, so a descending step reads stale current).
-  At the Voc probe (duty 0, where the load draws nothing) the INA219 still reads a current proportional to the bus
-  voltage (~3 mA/V on rev1, see LESSONS.md); that error per volt is measured there and `err * V` is subtracted from
-  every reading in the sweep. The dynamic load screen applies the same correction, recalibrating whenever the load
-  has been at 0 for 500 ms, and averages over the same 100 ms window. The sweep hard-stops (aborts, keeping points already recorded) if
+  Current readings are corrected as `raw - offset - k * V` (see LESSONS.md): `offset` is the INA219 zero offset,
+  re-measured at every power-up with the panel unplugged and kept in NVS; `k` (~3.2 mA/V on rev1) is calibrated once
+  on the bench with the `kcal` console command and kept in NVS. Without `kcal`, k is measured at duty 0 every
+  sweep, which also hides the load's real idle current (~4 mA, op-amp offset). The dynamic load screen uses the
+  same correction and averages over the same 100 ms window. The sweep hard-stops (aborts, keeping points already recorded) if
   measured power reaches the shared 5000 mW power cap.
 
 ---
@@ -126,6 +127,8 @@ With the board on USB, send line commands to the serial port (115200 baud):
 | `scan <max_duty> <step>` | Fixed-step load scan, no calibration |
 | `dyn on\|up\|down\|off` | Drive the dynamic load |
 | `raw <duty> <n>` | n single shunt register reads at a held duty |
+| `zero` | Re-measure the INA219 zero offset (panel unplugged) |
+| `kcal <mA>` | One-time per-volt calibration: supply at ~12 V, load idle, `<mA>` = multimeter reading in series |
 | `gain <1\|2\|4\|8>`, `avg <n>` | INA219 PGA and hardware averaging (bench experiments) |
 
 Every sweep/scan point logs `CSV,duty,bus_mV,shunt_uV,raw_mA,corrected_mA`; dynamic load logs
