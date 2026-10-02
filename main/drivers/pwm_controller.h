@@ -33,12 +33,12 @@ extern "C"
 
 #define PWM_CONTROLLER_CONFIG_DEFAULT   \
     {.gpio = 8,                         \
-     .freq_hz = 8000U,                  \
+     .freq_hz = 4000U,                  \
      .duty_percent = 0U,                \
      .channel = LEDC_CHANNEL_0,         \
      .timer = LEDC_TIMER_0,             \
      .speed_mode = LEDC_LOW_SPEED_MODE, \
-     .duty_resolution = LEDC_TIMER_13_BIT}
+     .duty_resolution = LEDC_TIMER_14_BIT}
 
     typedef struct pwm_controller pwm_controller_t; /* opaque */
 
@@ -67,7 +67,7 @@ extern "C"
 
     /**
      * @brief Get the current PWM controller resolution, i.e. the maximum duty
-     * count for the configured resolution (e.g. 8191 for 13-bit), not the
+     * count for the configured resolution (e.g. 16383 for 14-bit), not the
      * resolution in bits.
      *
      * @param res Pointer to uint32_t where the max duty count will be stored.

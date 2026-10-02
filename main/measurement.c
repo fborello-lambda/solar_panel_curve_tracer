@@ -35,7 +35,7 @@ static const char *TAG = "MEASURE";
 #define SWEEP_SETTLE_MS 250              // settle time after a duty step before sampling
 #define SWEEP_FIRST_POINT_SETTLE_MS 1000 // longer settle for the true open-circuit point
 #define SWEEP_SAMPLE_WINDOW_MS 100       // averaging window, an integer number of 50/60 Hz half-cycles
-#define SWEEP_NO_LOAD_DUTY 64            // by this duty the load must draw current...
+#define SWEEP_NO_LOAD_DUTY 128           // by this duty the load must draw current...
 #define SWEEP_NO_LOAD_MIN_MA 2.0f        // ...at least this much, or the load is broken
 #define INA_OFFSET_MAX_MA 8.0f           // larger zero readings are real current, never offset
 #define SWEEP_REVERSED_MIN_MA 5.0f       // current at ~0 V above this (after offset): panel reversed.
@@ -635,7 +635,7 @@ static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, 
         float v_mV = v * 1000.0f;
         ESP_LOGI(TAG, "auto_range: probe duty=%lu -> V=%.0f mV I=%.1f mA", (unsigned long)sr.duty, v_mV, i_mA);
 
-        // The load commands ~0.48 mA per duty step, so by SWEEP_NO_LOAD_DUTY
+        // The load commands ~0.24 mA per duty step, so by SWEEP_NO_LOAD_DUTY
         // the current must have risen unless the panel already collapsed.
         // If it hasn't, the load circuit (op-amp, MOSFET, wiring) isn't
         // drawing anything and the sweep would only record Voc.

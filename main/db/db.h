@@ -18,7 +18,7 @@ extern "C"
 {
 #endif
 
-#define DB_MAX_SAMPLES 20
+#define DB_MAX_SAMPLES 40
 
     /**
      * @brief Initialize the database mutex/semaphore.
