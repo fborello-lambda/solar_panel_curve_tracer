@@ -5,11 +5,13 @@
 #include "chart_math.h"
 #include "driver_sh1106.h"
 
-// Plot box: axes at x=PX0-1 / y=PY0+1, data area PX0..PX1 by PY1..PY0.
+// Plot box: axes at x=PX0-2 / y=PY0+2, data area PX0..PX1 by PY1..PY0.
+// PY1/PX1 leave 2 px for the 5x5 cursor box, so the highest point (the MPP
+// on the power curve, Isc on the I-V curve) and Voc are not clipped.
 #define PX0 5
-#define PX1 126
+#define PX1 124
 #define PY0 48 // bottom (zero) row of the data area
-#define PY1 1  // top row
+#define PY1 3  // top row
 #define PW (PX1 - PX0 + 1)
 #define PH (PY0 - PY1 + 1)
 #define FOOTER_Y 56
@@ -28,8 +30,8 @@ static int py_of(float y, float ymax)
 void ui_chart_render(uint8_t *fb, const float *v, const float *i, int n, int sel, bool power_mode)
 {
     // Axes: left edge and bottom edge, with a tick at each end.
-    sh1106_fb_draw_line(fb, PX0 - 2, PY1 - 1, PX0 - 2, PY0 + 2, 0, true);
-    sh1106_fb_draw_line(fb, PX0 - 2, PY0 + 2, PX1 + 1, PY0 + 2, 0, true);
+    sh1106_fb_draw_line(fb, PX0 - 2, PY1 - 3, PX0 - 2, PY0 + 2, 0, true);
+    sh1106_fb_draw_line(fb, PX0 - 2, PY0 + 2, PX1 + 3, PY0 + 2, 0, true);
     sh1106_fb_draw_line(fb, PX1, PY0 + 2, PX1, PY0 + 4, 0, true);
 
     if (n <= 0)
@@ -92,7 +94,7 @@ void ui_chart_render(uint8_t *fb, const float *v, const float *i, int n, int sel
     sy = power_mode ? py_of(v[sel] * i[sel], pmax) : py_of(i[sel], imax);
 
     // Dotted vertical guide through the selected point, then a hollow 5x5 box.
-    for (int y = PY1; y <= PY0 + 1; y += 2)
+    for (int y = PY1 - 2; y <= PY0 + 1; y += 2)
     {
         sh1106_fb_set_pixel(fb, sx, y, true);
     }

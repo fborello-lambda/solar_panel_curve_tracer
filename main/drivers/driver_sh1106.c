@@ -396,7 +396,7 @@ static bool glyph_for_char(char c, uint8_t out[5])
         memcpy(out, (uint8_t[]){0x00, 0x36, 0x36, 0x00, 0x00}, 5);
         return true;
     case '/':
-        memcpy(out, (uint8_t[]){0x03, 0x0C, 0x10, 0x60, 0x80}, 5);
+        memcpy(out, (uint8_t[]){0x60, 0x10, 0x08, 0x04, 0x03}, 5);
         return true;
     case ' ':
         memcpy(out, (uint8_t[]){0x00, 0x00, 0x00, 0x00, 0x00}, 5);
