@@ -21,11 +21,14 @@ header-includes: |
   \newcommand{\emc}{\end{multicols}}
 ---
 
-# Trazador de curvas I-V: guía rápida
-
-Mide la curva corriente-tensión (I-V) de un panel solar y calcula Voc, Isc y el punto de máxima
-potencia (MPP). Funciona sin internet: se maneja desde la pantalla OLED con la perilla o desde un
-teléfono por Wi-Fi.
+\noindent\begin{minipage}[c]{0.86\textwidth}
+{\Large\bfseries Trazador de curvas I-V: guía rápida}\\[4pt]
+Mide la curva corriente-tensión (I-V) de un panel solar y calcula Voc, Isc y el punto de máxima potencia (MPP). Funciona sin internet: se maneja desde la pantalla OLED con la perilla o desde un teléfono por Wi-Fi.
+\end{minipage}\hfill
+\begin{minipage}[c]{0.11\textwidth}\centering
+\includegraphics[width=\linewidth]{docs/img/guide_qr.png}\\
+{\scriptsize Guía en línea}
+\end{minipage}
 
 \bmc
 
@@ -56,8 +59,9 @@ Menús en inglés; entre paréntesis, su significado.
 - **CURVE CHART** (gráfico de la curva): la última curva en pantalla. Girar recorre los puntos
   (abajo se ven V e I); **doble pulsación** superpone la curva de potencia (abajo, mW);
   mantener para volver.
-- **DYNAMIC LOAD** (carga manual): girar sube o baja la corriente que se toma del panel; muestra
-  I, potencia y tensión. Máx. 10 % de la escala y 3 W.
+- **DYNAMIC LOAD** (carga manual): girar mueve la carga en 10 pasos, de 0 a la Isc del último
+  barrido. **Doble pulsación**: mide de nuevo el rango (otra luz, otro panel, una fuente).
+  Mantener para volver. Máx. 3 W.
 
 **SYSTEM** (sistema): **OTA** (QR de actualización), **RESET** (reiniciar) y **DEEP SLEEP**
 (bajo consumo; despierta con la perilla). **BACK** = volver.
@@ -69,13 +73,14 @@ Menús en inglés; entre paréntesis, su significado.
 3. Se ven la curva, Voc, Isc, Pmax, Vmp e Imp; **Descargar CSV** guarda los datos; **Guía** abre
    la guía completa.
 
+\columnbreak
+
 ## 4. Qué hace un barrido (10 a 20 s)
 
 1. Mide la tensión sin carga.
 2. Busca solo el rango de corriente (no hay que configurarlo).
 3. Toma hasta **40 puntos** repartidos a lo largo de toda la curva y se detiene al llegar a Isc.
 
-\columnbreak
 
 ## 5. Rango y precisión
 
@@ -85,7 +90,7 @@ Menús en inglés; entre paréntesis, su significado.
 - **Corrientes chicas** (menos de unos 20 mA): pocos puntos y error de **1 a 2 mA**.
 - La carga nunca se apaga del todo: toma unos **4 mA** aun en reposo. Por eso el primer punto
   marca unos 4 mA, y en un panel con poca luz la tensión "sin carga" sale menor que la de un
-  multímetro con el panel suelto. Es lo que realmente se mide.
+  multímetro con el panel suelto.
 
 ## 6. Consejos
 
@@ -100,7 +105,7 @@ Menús en inglés; entre paréntesis, su significado.
   0,5 V). Ilumínelo mejor.
 - **"Panel invertido", LED rojo**: intercambie PV+ y PV-.
 - **La curva no llega a 0 V**: el panel supera el tope de 780 mA.
-- **El barrido se corta**: se llegó al límite de 10 W.
+- **El barrido se corta**: llegó al tope de 10 W.
 - **Medición poco precisa**: corriente muy chica; más luz.
 - **Página web vacía**: vuelva a conectarse a la red ESP32_PLOT.
 
@@ -112,9 +117,5 @@ Menús en inglés; entre paréntesis, su significado.
   ESP32_PLOT, abra `http://192.168.4.1/ota` (o QR en **SYSTEM > OTA**) y súbalo. Es un solo
   archivo; reinicia solo en unos 30 s.
 
-\begin{center}
-\includegraphics[width=0.12\textwidth]{docs/img/guide_qr.png}\\
-{\small Guía en línea}
-\end{center}
 
 \emc
