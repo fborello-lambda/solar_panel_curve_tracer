@@ -131,7 +131,7 @@ static esp_err_t data_get_handler(httpd_req_t *req)
     }
 
     // Otherwise return JSON array of points: [{x:...,y:...}, ...]
-    char buf[1024];
+    char buf[2048]; // ~25 bytes per point, DB_MAX_SAMPLES points
     ssize_t len = build_x_y_samples_json(buf, sizeof(buf), x, y, DB_MAX_SAMPLES, count);
 
     return httpd_resp_send(req, buf, len);

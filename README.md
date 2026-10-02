@@ -51,7 +51,7 @@ esptool.py --chip esp32c3 write_flash 0x0 factory-standard.bin
 
 Each trace auto-ranges: the firmware probes open-circuit voltage (Voc), then doubles the
 commanded load current until the panel collapses, locating the knee of the curve without the
-operator dialling in a current range. From there, an adaptive stepper places the 20 recorded
+operator dialling in a current range. From there, an adaptive stepper places up to 40 recorded
 points by normalized arc length along the curve (voltage and current each scaled 0..1), so the
 steep part near Voc, the knee, and the flat part near Isc all get points regardless of the
 panel's actual Isc (a few mA up to the load's cap). At the Voc probe (duty 0, no load) the

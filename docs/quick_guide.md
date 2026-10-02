@@ -64,9 +64,9 @@ panel solar pequeño, calculando el punto de máxima potencia (MPP).
 
 1. Se mide la tensión de circuito abierto (Voc).
 2. Se busca automáticamente el rango de corriente adecuado.
-3. Se registran 20 puntos, la mayoría concentrados cerca del codo de
-   la curva.
-4. El barrido completo toma entre 10 y 15 segundos.
+3. Se registran hasta 40 puntos, repartidos a lo largo de toda la
+   curva.
+4. El barrido completo toma entre 10 y 20 segundos.
 
 ## Leer el resultado
 
@@ -145,8 +145,8 @@ small solar panel, computing the maximum power point (MPP).
 
 1. Open-circuit voltage (Voc) is measured.
 2. The current range is found automatically.
-3. 20 points are recorded, spread along the whole curve shape (not just the knee).
-4. A full sweep takes about 10 to 15 seconds.
+3. Up to 40 points are recorded, spread along the whole curve shape.
+4. A full sweep takes about 10 to 20 seconds.
 
 ## Reading the result
 

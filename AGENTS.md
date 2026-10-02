@@ -26,14 +26,14 @@ main/
     driver_sh1106     # SH1106 OLED driver (framebuffer, text, QR)
     driver_encoder    # Rotary encoder GPIO ISR: quadrature decode (components/quadrature)
                        # for rotation, esp_timer settle + ANYEDGE state machine for the button
-    pwm_controller    # LEDC wrapper (GPIO 8, 8 kHz, 13-bit)
+    pwm_controller    # LEDC wrapper (GPIO 8, 4 kHz, 14-bit: ~0.24 mA per duty step)
   utils/
     init.c/h          # Wi-Fi soft-AP, NVS, HTTP server startup
     led_controller    # WS2812 RGB LED (GPIO 10)
   server/
     server.c/h        # HTTP handlers, see endpoint table below
   db/
-    db.c/h            # Circular sample buffer (max 20 points), mutex-protected
+    db.c/h            # Circular sample buffer (max 40 points), mutex-protected
   web/                # Web UI (HTML/CSS/JS + Chart.js), gzip-compressed and embedded
                        # into the app image at build time, no SPIFFS and no
                        # separate storage partition
@@ -109,7 +109,7 @@ Partition table offset: `0xD000` (pushed up to fit the secure-boot-signed bootlo
   app rollback: the newly flashed OTA slot is committed on the next boot.
 - **Auto-range sweep**: each trace probes Voc at zero load, then doubles the commanded PWM duty until the panel
   collapses, to locate the knee of the I-V curve without an operator-entered current range. From there, an adaptive
-  state machine (`sweep_adapt_*` in `components/sweep_plan`) places the sweep's 20 points by normalized arc length
+  state machine (`sweep_adapt_*` in `components/sweep_plan`) places up to 40 points by normalized arc length
   along the curve (V/Voc, I/Isc), estimating the local slope and measured current gain from the last two points so
   the steep part near Voc, the knee, and the flat part near Isc all get points for any Isc, from a few mA up to the
   duty cap. Duty only ever steps up (the RC input filter drains slowly, so a descending step reads stale current).

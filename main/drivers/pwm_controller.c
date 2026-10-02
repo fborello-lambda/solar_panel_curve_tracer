@@ -53,8 +53,8 @@ int pwm_controller_init(const pwm_controller_config_t *cfg)
     return 0;
 }
 
-// Returns the maximum duty count for the configured resolution (e.g. 8191
-// for 13-bit), not the resolution in bits.
+// Returns the maximum duty count for the configured resolution (e.g. 16383
+// for 14-bit), not the resolution in bits.
 int pwm_controller_get_resolution(uint32_t *res)
 {
     pwm_controller_t *pc = &s_pwm_controller;
