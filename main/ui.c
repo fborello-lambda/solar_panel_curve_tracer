@@ -259,7 +259,9 @@ void ui_on_rotate(int dir)
         {
             s_chart_sel = chart_mpp_index_hint();
         }
-        s_chart_sel = clamp_index(s_chart_sel + dir, s_chart_n);
+        // Inverted on purpose: on this knob, turning "forward" reads as
+        // moving toward Isc, which is to the left on the I-V chart.
+        s_chart_sel = clamp_index(s_chart_sel - dir, s_chart_n);
         app_display_mark_dirty();
         return;
     }
