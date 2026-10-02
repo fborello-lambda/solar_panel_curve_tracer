@@ -288,7 +288,11 @@
   // (the board's LED is red at the same time).
   function renderFault() {
     if (!faultNote || !faultNoteText) return;
-    const key = lastFault === "no_panel" ? "note_no_panel" : lastFault === "no_load" ? "note_no_load" : null;
+    const key =
+      lastFault === "no_panel" ? "note_no_panel"
+      : lastFault === "no_load" ? "note_no_load"
+      : lastFault === "reversed" ? "note_reversed"
+      : null;
     faultNote.style.display = key ? "flex" : "none";
     if (key) faultNoteText.textContent = i18n.t(key);
   }

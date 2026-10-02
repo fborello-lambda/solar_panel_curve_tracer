@@ -22,11 +22,12 @@ typedef enum
     MEASUREMENT_FAULT_NONE = 0,
     MEASUREMENT_FAULT_NO_PANEL, // open-circuit voltage below SWEEP_VOC_MIN_MV
     MEASUREMENT_FAULT_NO_LOAD,  // commanding more load did not raise the current
+    MEASUREMENT_FAULT_REVERSED, // current flowing at ~0 V: panel reversed or shorted
 } measurement_fault_t;
 
 /** @brief Fault from the last REAL sweep (cleared when a new one starts). */
 measurement_fault_t measurement_last_fault(void);
-/** @brief "none", "no_panel" or "no_load", for the /status JSON. */
+/** @brief "none", "no_panel", "no_load" or "reversed", for the /status JSON. */
 const char *measurement_fault_str(measurement_fault_t fault);
 
 bool measurement_is_running(void);
@@ -59,6 +60,24 @@ bool measurement_raw_scan(uint32_t max_duty, uint32_t step);
  * raw shunt current in mA. Used by the dynamic load screen.
  */
 bool measurement_sample(float *out_bus_mV, float *out_raw_mA);
+
+/** @brief INA219 fixed zero offset in mA (subtract it from raw readings). */
+float measurement_ina_offset_mA(void);
+
+/**
+ * @brief Re-measure the INA219 fixed zero offset now. The panel must be
+ * disconnected (input below 0.5 V); returns false otherwise or when busy.
+ */
+bool measurement_capture_zero(void);
+
+/**
+ * @brief One-time bench calibration of the INA219 voltage-proportional error:
+ * with a stiff source of a few volts on the input and the load idle, pass the
+ * current a multimeter in series reads (the load's real idle current). Stored
+ * in NVS; from then on sweeps report that idle current instead of zeroing it.
+ */
+bool measurement_calibrate_k(float real_idle_mA);
+float measurement_ina_k_mA_per_V(void);
 
 void measurement_set_producer_mode(curve_producer_mode_t mode);
 curve_producer_mode_t measurement_get_producer_mode(void);

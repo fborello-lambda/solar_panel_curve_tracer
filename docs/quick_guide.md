@@ -42,8 +42,8 @@ panel solar pequeño, calculando el punto de máxima potencia (MPP).
 
 ## Conectar el panel y encender
 
-- Conecte el terminal positivo del panel a **PV+** y el negativo a **PV-**.
-- Conecte la batería: el dispositivo arranca solo y muestra el menú OLED.
+- Encienda primero **sin el panel conectado**: al arrancar se calibra el cero del sensor.
+- Luego conecte el panel: positivo a **PV+**, negativo a **PV-**.
 
 ## Medir desde la pantalla OLED
 
@@ -122,8 +122,8 @@ small solar panel, computing the maximum power point (MPP).
 
 ## Connecting the panel and powering on
 
-- Connect the panel's positive lead to **PV+** and negative to **PV-**.
-- Connect the battery: the device boots on its own and shows the OLED menu.
+- Power on first **with the panel unplugged**: the sensor zero is calibrated at boot.
+- Then connect the panel: positive to **PV+**, negative to **PV-**.
 
 ## Measuring from the OLED
 
