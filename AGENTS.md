@@ -102,9 +102,13 @@ Partition table offset: `0xD000` (pushed up to fit the secure-boot-signed bootlo
   the point's V and mA. A double press (two BUTTON events within 400 ms, timed in `ui.c`) toggles a dashed P(V) overlay and
   mW footer; a single press does nothing. A long press (button held 700 ms, `ENCODER_EVENT_LONG_PRESS` from a one-shot
   esp_timer in `driver_encoder.c`) returns to the MEASURE menu; other screens ignore it.
-- **Dynamic load**: encoder adjusts PWM setpoint live, capped at `DYNAMIC_LOAD_DUTY_MAX_PERCENT` (10% duty). It
-  has its own `DYNAMIC_LOAD_POWER_LIMIT_MW` (3000 mW) power cap, lower than the sweep's because it can hold a setpoint indefinitely, with a hysteresis margin
-  (`LOAD_POWER_NEAR_MARGIN_MW`) before backing off duty.
+- **Dynamic load**: the knob moves the load in `DYNAMIC_LOAD_POSITIONS` (10) equal steps from 0 to a top duty that
+  just reaches the source's Isc: the last REAL sweep's auto-range knee (+15%), or, after a double press, a range
+  probe that runs the same `sweep_range_*` doubling search on whatever is connected (panel in other light, bench
+  supply). With no sweep and no probe, or a stiff source that never collapses, the top is the
+  `DYNAMIC_LOAD_DUTY_MAX_PERCENT` (10%) duty cap. A long press leaves the screen. It has its own
+  `DYNAMIC_LOAD_POWER_LIMIT_MW` (3000 mW) cap, lower than the sweep's because it can hold a setpoint indefinitely,
+  with a hysteresis margin (`LOAD_POWER_NEAR_MARGIN_MW`) before backing off one position.
 - **OTA**: single-file app update via the `/ota` HTTP endpoint (`app-standard.bin`), no `idf.py ota` command. No
   app rollback: the newly flashed OTA slot is committed on the next boot.
 - **Auto-range sweep**: each trace probes Voc at zero load, then doubles the commanded PWM duty until the panel
@@ -130,7 +134,7 @@ With the board on USB, send line commands to the serial port (115200 baud):
 | --- | --- |
 | `sweep` / `stop` | Start / stop a REAL sweep |
 | `scan <max_duty> <step>` | Fixed-step load scan, no calibration |
-| `dyn on\|up\|down\|off` | Drive the dynamic load |
+| `dyn on\|up\|down\|range\|off` | Drive the dynamic load (`range` = double press) |
 | `raw <duty> <n>` | n single shunt register reads at a held duty |
 | `zero` | Re-measure the INA219 zero offset (panel unplugged) |
 | `kcal <mA>` | One-time per-volt calibration: supply at ~12 V, load idle, `<mA>` = multimeter reading in series |

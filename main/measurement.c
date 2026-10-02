@@ -736,6 +736,11 @@ static void producer_task(void *arg)
         return;
     }
 
+    // Seeds the dynamic load's knob scale (see dynamic_load_enter): the duty
+    // that just reaches Isc, without the extra reach `top` may carry.
+    g_app.last_sweep_top_duty = knee * SWEEP_KNEE_HEADROOM_PERCENT / 100;
+    g_app.last_sweep_isc_mA = isc_mA;
+
     ESP_LOGI(TAG, "producer_task: Starting data production (top=%lu knee=%lu isc=%.1f mA)",
              (unsigned long)top, (unsigned long)knee, (double)isc_mA);
 

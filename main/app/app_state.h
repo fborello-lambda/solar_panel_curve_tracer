@@ -72,6 +72,16 @@ typedef struct
     float ina_err_mA_per_V; // INA219 current error per bus volt, measured at zero load (see auto_range)
     bool dynamic_power_limited;
     uint32_t dynamic_duty_steps;
+    // The knob moves the dynamic load in DYNAMIC_LOAD_POSITIONS equal steps from 0 to
+    // dynamic_full_duty, the duty that reaches the source's short-circuit current (from the last
+    // REAL sweep, or from a range probe on a double press), capped at DYNAMIC_LOAD_DUTY_MAX_PERCENT.
+    int dynamic_pos;
+    uint32_t dynamic_full_duty;
+    float dynamic_full_mA;                 // current expected at the top position, 0 if unknown
+    volatile int dynamic_range_state;      // DYNAMIC_RANGE_*
+    uint32_t dynamic_session;              // bumped on every dynamic_load_enter()
+    uint32_t last_sweep_top_duty;          // auto-range top of the last REAL sweep, 0 if none
+    float last_sweep_isc_mA;
     TickType_t dynamic_last_adjust_tick;
     TickType_t dynamic_last_sample_tick;
     bool display_dirty;
@@ -95,7 +105,7 @@ extern app_state_t g_app;
 #define ENC_DT_GPIO GPIO_NUM_2
 #define ENC_CLK_GPIO GPIO_NUM_3
 #define ENC_SW_GPIO GPIO_NUM_4
-#define DYNAMIC_LOAD_DUTY_STEP 192
+#define DYNAMIC_LOAD_POSITIONS 10
 #define DYNAMIC_LOAD_DUTY_MAX_PERCENT 10
 #define DYNAMIC_LOAD_UPDATE_MS 120
 #define DYNAMIC_LOAD_SETTLE_MS 80

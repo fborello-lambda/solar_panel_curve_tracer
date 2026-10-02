@@ -21,11 +21,14 @@ header-includes: |
   \newcommand{\emc}{\end{multicols}}
 ---
 
-# I-V curve tracer: quick guide
-
-Measures the current-voltage (I-V) curve of a solar panel and computes Voc, Isc and the maximum
-power point (MPP). Works without internet: use the OLED screen and the knob, or a phone over
-Wi-Fi.
+\noindent\begin{minipage}[c]{0.86\textwidth}
+{\Large\bfseries I-V curve tracer: quick guide}\\[4pt]
+Measures the current-voltage (I-V) curve of a solar panel and computes Voc, Isc and the maximum power point (MPP). Works without internet: use the OLED screen and the knob, or a phone over Wi-Fi.
+\end{minipage}\hfill
+\begin{minipage}[c]{0.11\textwidth}\centering
+\includegraphics[width=\linewidth]{docs/img/guide_qr.png}\\
+{\scriptsize Online guide}
+\end{minipage}
 
 \bmc
 
@@ -50,8 +53,9 @@ Wi-Fi.
   panel; **DEMO** shows an example curve without using the panel.
 - **CURVE CHART**: the last curve on screen. Turning walks the points (V and I shown below);
   **double press** overlays the power curve (mW below); hold to go back.
-- **DYNAMIC LOAD**: manual load. Turning raises or lowers the current drawn from the panel;
-  shows I, power and voltage. Max. 10 % of full scale and 3 W.
+- **DYNAMIC LOAD**: manual load. Turning raises or lowers the load in 10 steps, from 0 to the
+  last sweep's Isc (no sweep yet: up to the maximum); shows I, power and voltage. **Double press**: re-measure the range with
+  whatever is connected (other light, another panel or a supply). Hold to go back. Max. 3 W.
 
 **SYSTEM**: update QR (OTA), reset and deep sleep (wakes with the knob).
 
@@ -62,13 +66,13 @@ Wi-Fi.
 3. Shows the curve, Voc, Isc, Pmax, Vmp and Imp; **CSV** downloads the data; **Guide** opens the
    full guide. ES/EN switch and light/dark theme.
 
+\columnbreak
+
 ## 4. What a sweep does (10 to 20 s)
 
 1. Measures the open-circuit voltage.
 2. Finds the current range by itself (nothing to configure).
 3. Takes up to **40 points** along the whole curve and stops at Isc.
-
-\columnbreak
 
 ## 5. Range and precision
 
@@ -105,9 +109,5 @@ Wi-Fi.
   `http://192.168.4.1/ota` (or the QR in **SYSTEM > OTA**) and upload it. It is a single file;
   it reboots on its own in about 30 s.
 
-\begin{center}
-\includegraphics[width=0.12\textwidth]{docs/img/guide_qr.png}\\
-{\small Online guide}
-\end{center}
 
 \emc

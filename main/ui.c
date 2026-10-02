@@ -93,16 +93,17 @@ static bool ui_wake_if_off(void)
     return true;
 }
 
-#define CHART_DOUBLE_PRESS_MS 400
+#define DOUBLE_PRESS_MS 400
 
 static int s_chart_sel = -1; // -1: start on the MPP at the next render
 static int s_chart_n = 0;    // point count seen by the last render
 static bool s_chart_power = false;
-static bool s_chart_press_valid = false;
-// A long press only counts when its own press was seen on the chart screen:
-// the press that opened the screen, if held, would otherwise close it again.
-static bool s_chart_long_armed = false;
-static uint32_t s_chart_last_press_ms = 0;
+// Press state shared by the chart and dynamic load screens (double press and
+// long press). A long press only counts when its own press was seen on that
+// screen: the press that opened it, if held, would otherwise close it again.
+static bool s_press_valid = false;
+static bool s_long_armed = false;
+static uint32_t s_last_press_ms = 0;
 
 static void ui_set_screen(ui_screen_t screen)
 {
@@ -355,6 +356,8 @@ void ui_on_button(void)
             measurement_request(false);
             if (dynamic_load_enter())
             {
+                s_press_valid = false;
+                s_long_armed = false;
                 ui_set_screen(UI_SCREEN_ACTION_DYNAMIC_LOAD);
             }
             else
@@ -368,8 +371,8 @@ void ui_on_button(void)
         {
             s_chart_sel = -1;
             s_chart_power = false;
-            s_chart_press_valid = false;
-            s_chart_long_armed = false;
+            s_press_valid = false;
+            s_long_armed = false;
             ui_set_screen(UI_SCREEN_ACTION_CHART);
             return;
         }
@@ -425,33 +428,46 @@ void ui_on_button(void)
 
     if (g_app.ui_screen == UI_SCREEN_ACTION_CHART)
     {
-        // Single press: nothing. Two presses within CHART_DOUBLE_PRESS_MS
+        // Single press: nothing. Two presses within DOUBLE_PRESS_MS
         // toggle the power overlay.
         uint32_t now_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
-        s_chart_long_armed = true;
-        if (s_chart_press_valid && chart_is_double_press(s_chart_last_press_ms, now_ms, CHART_DOUBLE_PRESS_MS))
+        s_long_armed = true;
+        if (s_press_valid && chart_is_double_press(s_last_press_ms, now_ms, DOUBLE_PRESS_MS))
         {
             s_chart_power = !s_chart_power;
-            s_chart_press_valid = false;
+            s_press_valid = false;
             app_display_mark_dirty();
         }
         else
         {
-            s_chart_press_valid = true;
-            s_chart_last_press_ms = now_ms;
+            s_press_valid = true;
+            s_last_press_ms = now_ms;
         }
         return;
     }
 
     if (g_app.ui_screen == UI_SCREEN_ACTION_DYNAMIC_LOAD)
     {
-        dynamic_load_exit();
-        ui_set_screen(UI_SCREEN_MENU);
+        // Single press: nothing (a long press leaves). Double press: range
+        // probe, re-scaling the knob to whatever is connected now.
+        uint32_t now_ms = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+        s_long_armed = true;
+        if (s_press_valid && chart_is_double_press(s_last_press_ms, now_ms, DOUBLE_PRESS_MS))
+        {
+            s_press_valid = false;
+            dynamic_load_request_range();
+        }
+        else
+        {
+            s_press_valid = true;
+            s_last_press_ms = now_ms;
+        }
     }
 }
 
-// Only the chart screen reacts to a long press (back to the MEASURE menu);
-// everywhere else the BUTTON event at press-down already did the work.
+// Only the chart and dynamic load screens react to a long press (back to the
+// MEASURE menu); everywhere else the BUTTON event at press-down already did
+// the work.
 void ui_on_long_press(void)
 {
     ui_mark_activity();
@@ -460,9 +476,17 @@ void ui_on_long_press(void)
         return;
     }
 
-    if (g_app.ui_screen == UI_SCREEN_ACTION_CHART && s_chart_long_armed)
+    if (g_app.ui_screen == UI_SCREEN_ACTION_CHART && s_long_armed)
     {
-        s_chart_long_armed = false;
+        s_long_armed = false;
+        ui_set_screen(UI_SCREEN_MENU);
+        return;
+    }
+
+    if (g_app.ui_screen == UI_SCREEN_ACTION_DYNAMIC_LOAD && s_long_armed)
+    {
+        s_long_armed = false;
+        dynamic_load_exit();
         ui_set_screen(UI_SCREEN_MENU);
     }
 }
@@ -657,19 +681,11 @@ void ui_render_display_frame(uint8_t *fb)
         char vbus_line[24] = {0};
         char status_line[24] = {0};
 
-        uint32_t pwm_res_disp = 0;
-        pwm_controller_get_resolution(&pwm_res_disp);
-        float duty_pct = (pwm_res_disp > 0) ? ((float)g_app.dynamic_duty_steps * 100.0f / (float)pwm_res_disp) : 0.0f;
-
-        // Build load bar scaled to DYNAMIC_LOAD_DUTY_MAX_PERCENT
-        float duty_rel = (DYNAMIC_LOAD_DUTY_MAX_PERCENT > 0) ? (duty_pct / DYNAMIC_LOAD_DUTY_MAX_PERCENT) : 0.0f;
-        int filled = (int)roundf(duty_rel * 8.0f);
-        if (filled > 8) filled = 8;
-        char bar[9] = {0};
-        for (int i = 0; i < 8; i++)
-            bar[i] = (i < filled) ? '>' : '.';
-        int duty_int = (int)roundf(duty_pct);
-        snprintf(load_bar, sizeof(load_bar), "|%s| %d/%d%%", bar, duty_int, DYNAMIC_LOAD_DUTY_MAX_PERCENT);
+        // One bar cell per knob position.
+        char bar[DYNAMIC_LOAD_POSITIONS + 1] = {0};
+        for (int i = 0; i < DYNAMIC_LOAD_POSITIONS; i++)
+            bar[i] = (i < g_app.dynamic_pos) ? '>' : '.';
+        snprintf(load_bar, sizeof(load_bar), "|%s| %d/%d", bar, g_app.dynamic_pos, DYNAMIC_LOAD_POSITIONS);
 
         if (g_app.dynamic_measured_valid)
         {
@@ -684,10 +700,14 @@ void ui_render_display_frame(uint8_t *fb)
             snprintf(vbus_line, sizeof(vbus_line), "VBUS: N/A");
         }
 
-        if (g_app.dynamic_power_limited)
+        if (g_app.dynamic_range_state != DYNAMIC_RANGE_IDLE)
+            snprintf(status_line, sizeof(status_line), "RANGING...");
+        else if (g_app.dynamic_power_limited)
             snprintf(status_line, sizeof(status_line), "LIMIT: MAX %.0fW", DYNAMIC_LOAD_POWER_LIMIT_MW / 1000.0f);
+        else if (g_app.dynamic_full_mA > 0.0f)
+            snprintf(status_line, sizeof(status_line), "TOP %.0fmA 2x:RANGE", g_app.dynamic_full_mA);
         else
-            snprintf(status_line, sizeof(status_line), "STATUS: OK");
+            snprintf(status_line, sizeof(status_line), "TOP: MAX  2x:RANGE");
 
         sh1106_fb_draw_text(fb, 0, 8, "DYNAMIC LOAD");
         sh1106_fb_draw_text(fb, 0, 18, load_bar);

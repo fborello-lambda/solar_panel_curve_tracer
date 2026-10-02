@@ -25,7 +25,7 @@ static const char *TAG = "DEBUG";
 //   gain <1|2|4|8>   INA219 shunt PGA (+-40/80/160/320 mV)
 //   avg <1..128>     INA219 shunt ADC hardware averaging (samples)
 //   raw <duty> <n>   hold duty, dump n single shunt register reads (10 uV units)
-//   dyn on|off|up|down  drive the dynamic load screen (logs DYN,... lines)
+//   dyn on|off|up|down|range  drive the dynamic load screen (logs DYN,... lines)
 //   zero             re-measure the INA219 fixed offset (panel disconnected)
 //   kcal <mA>        calibrate the INA219 per-volt error; <mA> = idle current a
 //                    multimeter in series reads with a supply on the input
@@ -151,6 +151,8 @@ static void handle_line(char *line)
             dynamic_load_adjust(+1);
         else if (a && strcmp(a, "down") == 0)
             dynamic_load_adjust(-1);
+        else if (a && strcmp(a, "range") == 0)
+            dynamic_load_request_range();
     }
     else if (strcmp(cmd, "zero") == 0)
     {
