@@ -4,6 +4,7 @@
 #include <stdio.h>
 
 #include <esp_log.h>
+#include <nvs.h>
 #include <esp_timer.h>
 
 #include <freertos/FreeRTOS.h>
@@ -35,6 +36,10 @@ static const char *TAG = "MEASURE";
 #define SWEEP_SAMPLE_WINDOW_MS 100       // averaging window, an integer number of 50/60 Hz half-cycles
 #define SWEEP_NO_LOAD_DUTY 64            // by this duty the load must draw current...
 #define SWEEP_NO_LOAD_MIN_MA 2.0f        // ...at least this much, or the load is broken
+#define INA_OFFSET_AUTO_STEP_MA 3.0f     // boot only re-zeroes changes smaller than this
+#define INA_OFFSET_MAX_MA 8.0f           // larger zero readings are real current, never offset
+#define SWEEP_REVERSED_MIN_MA 2.0f       // current at ~0 V above this (after offset): panel reversed
+#define SWEEP_NO_PANEL_MV 500.0f         // input below this with no load: nothing can flow
 #define SWEEP_STOP_POLL_MS 25            // chunk size for waits, so stop is honored quickly
 
 static curve_producer_mode_t s_producer_mode = CURVE_PRODUCER_REAL;
@@ -43,6 +48,9 @@ static void measurement_apply_state_locked(bool running);
 static bool measurement_start_locked(measurement_refuse_reason_t *out_reason);
 static bool measurement_stop_locked(void);
 
+static float s_ina_offset_mA = 0.0f; // INA219 fixed zero offset, see ina_offset_capture()
+static void ina_offset_load(void);
+static void ina_offset_capture(float raw_mA);
 static void dummy_producer_task(void *arg);
 static void producer_task(void *arg);
 static void producer_finish(const char *task_name);
@@ -169,6 +177,18 @@ bool measurement_init_load_control_hw(void)
     ESP_LOGI(TAG, "driver_ina219: Calibration Done -- Current_Divider_mA=%d  Power_Multiplier_mW=%d  Current_LSB=%.6f A/bit CAL=0x%04X",
              g_app.ina_cal.current_divider_mA, g_app.ina_cal.power_multiplier_mW, g_app.ina_cal.current_lsb, g_app.ina_cal.cal_value);
     g_app.ina_ready = true;
+    ina_offset_load();
+    // Board powered with no panel attached: a free, exact offset reading.
+    {
+        float bus_mV = 0.0f, raw_mA = 0.0f;
+        // Only small corrections automatically: a reversed panel at boot
+        // would also read ~0 V with a few mA flowing. Bigger changes need
+        // the explicit `zero` console command with the panel unplugged.
+        if (measurement_sample(&bus_mV, &raw_mA) && bus_mV < SWEEP_NO_PANEL_MV &&
+            raw_mA > -INA_OFFSET_MAX_MA && raw_mA < INA_OFFSET_MAX_MA &&
+            raw_mA - s_ina_offset_mA < INA_OFFSET_AUTO_STEP_MA && s_ina_offset_mA - raw_mA < INA_OFFSET_AUTO_STEP_MA)
+            ina_offset_capture(raw_mA);
+    }
 
     return true;
 }
@@ -188,6 +208,8 @@ const char *measurement_fault_str(measurement_fault_t fault)
         return "no_panel";
     case MEASUREMENT_FAULT_NO_LOAD:
         return "no_load";
+    case MEASUREMENT_FAULT_REVERSED:
+        return "reversed";
     default:
         return "none";
     }
@@ -361,6 +383,67 @@ static bool sample_window(bool stoppable, float *out_bus_mV, float *out_shunt_uV
     return true;
 }
 
+// INA219 fixed zero offset (shunt ADC offset), in mA. Unlike the
+// voltage-proportional error (see auto_range), it is there even at 0 V:
+// with nothing connected rev1 reads a few mA (-5..+3 seen). It is captured at
+// boot and by the `zero` console command, only with the input below
+// SWEEP_NO_PANEL_MV and a plausible reading (a reversed panel also shows
+// ~0 V but real current), kept in NVS and subtracted from every reading.
+
+#define INA_OFFSET_NVS_NS "meas"
+#define INA_OFFSET_NVS_KEY "ina_off_ua"
+
+static void ina_offset_load(void)
+{
+    nvs_handle_t h;
+    if (nvs_open(INA_OFFSET_NVS_NS, NVS_READONLY, &h) != ESP_OK)
+        return;
+    int32_t ua = 0;
+    if (nvs_get_i32(h, INA_OFFSET_NVS_KEY, &ua) == ESP_OK)
+        s_ina_offset_mA = (float)ua / 1000.0f;
+    nvs_close(h);
+    ESP_LOGI(TAG, "INA219 zero offset %.2f mA (from NVS)", (double)s_ina_offset_mA);
+}
+
+// `raw_mA` must be a reading taken at duty 0 with the input below
+// SWEEP_NO_PANEL_MV, i.e. with no current able to flow.
+static void ina_offset_capture(float raw_mA)
+{
+    float diff = raw_mA - s_ina_offset_mA;
+    s_ina_offset_mA = raw_mA;
+    if (diff < 0.3f && diff > -0.3f)
+        return;
+    ESP_LOGI(TAG, "INA219 zero offset captured: %.2f mA", (double)raw_mA);
+    nvs_handle_t h;
+    if (nvs_open(INA_OFFSET_NVS_NS, NVS_READWRITE, &h) != ESP_OK)
+        return;
+    nvs_set_i32(h, INA_OFFSET_NVS_KEY, (int32_t)(raw_mA * 1000.0f));
+    nvs_commit(h);
+    nvs_close(h);
+}
+
+float measurement_ina_offset_mA(void)
+{
+    return s_ina_offset_mA;
+}
+
+bool measurement_capture_zero(void)
+{
+    float bus_mV = 0.0f, raw_mA = 0.0f;
+    if (g_app.measurement_running || g_app.dynamic_load_active || !g_app.pwm_ready)
+        return false;
+    pwm_controller_set_duty_in_res_steps(0);
+    vTaskDelay(pdMS_TO_TICKS(SWEEP_SETTLE_MS));
+    if (!measurement_sample(&bus_mV, &raw_mA) || bus_mV >= SWEEP_NO_PANEL_MV ||
+        raw_mA <= -INA_OFFSET_MAX_MA || raw_mA >= INA_OFFSET_MAX_MA)
+    {
+        ESP_LOGW(TAG, "zero: input at %.0f mV, disconnect the panel first", (double)bus_mV);
+        return false;
+    }
+    ina_offset_capture(raw_mA);
+    return true;
+}
+
 bool measurement_sample(float *out_bus_mV, float *out_raw_mA)
 {
     float bus_mV = 0.0f, shunt_uV = 0.0f;
@@ -374,9 +457,9 @@ bool measurement_sample(float *out_bus_mV, float *out_raw_mA)
 
 // Commands `duty_steps`, settles for `settle_ms`, then averages one
 // sample_window(). Used by both auto-range probes and recorded sweep points.
-// `err_mA_per_V` is the INA219 current-reading error per volt of bus
-// voltage (measured by auto_range()); `err_mA_per_V * V` is subtracted
-// from every reading. Pass 0 when it isn't known yet (the Voc probe).
+// The INA219 fixed zero offset plus `err_mA_per_V * V` (the error per volt
+// measured by auto_range(); pass 0 when it isn't known yet, i.e. the Voc
+// probe) are subtracted from every reading.
 static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms, float err_mA_per_V,
                                        float *out_v, float *out_i_mA, float *out_power_mW)
 {
@@ -397,7 +480,7 @@ static measure_result_t measure_point(uint32_t duty_steps, uint32_t settle_ms, f
     int shunt_mOhm = g_app.ina_cal.shunt_resistor_mOhm;
     float current_mA = (shunt_mOhm > 0) ? (shunt_uV / (float)shunt_mOhm) : 0.0f;
     float raw_mA = current_mA;
-    current_mA -= err_mA_per_V * (bus_mV / 1000.0f);
+    current_mA -= s_ina_offset_mA + err_mA_per_V * (bus_mV / 1000.0f);
     // Machine-readable dump for debugging over USB serial:
     // CSV,duty,bus_mV,shunt_uV,raw_mA,corrected_mA
     ESP_LOGI(TAG, "CSV,%lu,%.1f,%.1f,%.3f,%.3f", (unsigned long)duty_steps, (double)bus_mV,
@@ -445,6 +528,10 @@ static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, 
     if (r != MEASURE_OK)
         return false;
 
+    // zero_i_mA already has the fixed offset removed. The offset is NOT
+    // refreshed here: a panel connected backwards also reads ~0 V, but its
+    // current flows through the MOSFET body diode, so "0 V" does not prove
+    // that nothing flows (see measurement_capture_zero / boot capture).
     float err_mA_per_V = (voc_v >= 0.5f) ? (zero_i_mA / voc_v) : 0.0f;
     *out_err_mA_per_V = err_mA_per_V;
     g_app.ina_err_mA_per_V = err_mA_per_V;
@@ -456,6 +543,16 @@ static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, 
 
     if (!sweep_range_on_voc(&sr, voc_mV))
     {
+        // Current flowing at ~0 V with no load commanded: the panel is
+        // connected backwards (or shorted) and its current goes through
+        // the MOSFET body diode.
+        if (zero_i_mA > SWEEP_REVERSED_MIN_MA || zero_i_mA < -SWEEP_REVERSED_MIN_MA)
+        {
+            ESP_LOGW(TAG, "auto_range: %.1f mA flowing at %.0f mV with no load, panel reversed or shorted",
+                     zero_i_mA, voc_mV);
+            s_last_fault = MEASUREMENT_FAULT_REVERSED;
+            return false;
+        }
         ESP_LOGW(TAG, "auto_range: Voc %.0f mV below %d mV, no panel to sweep (dark, disconnected)",
                  voc_mV, SWEEP_VOC_MIN_MV);
         s_last_fault = MEASUREMENT_FAULT_NO_PANEL;

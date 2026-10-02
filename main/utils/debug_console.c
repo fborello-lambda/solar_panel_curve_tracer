@@ -26,6 +26,7 @@ static const char *TAG = "DEBUG";
 //   avg <1..128>     INA219 shunt ADC hardware averaging (samples)
 //   raw <duty> <n>   hold duty, dump n single shunt register reads (10 uV units)
 //   dyn on|off|up|down  drive the dynamic load screen (logs DYN,... lines)
+//   zero             re-measure the INA219 fixed offset (panel disconnected)
 static void ina_update_config(uint16_t mask, uint16_t bits)
 {
     if (g_app.measurement_running || g_app.dynamic_load_active)
@@ -148,6 +149,11 @@ static void handle_line(char *line)
             dynamic_load_adjust(+1);
         else if (a && strcmp(a, "down") == 0)
             dynamic_load_adjust(-1);
+    }
+    else if (strcmp(cmd, "zero") == 0)
+    {
+        if (measurement_capture_zero())
+            ESP_LOGI(TAG, "zero offset = %.2f mA", (double)measurement_ina_offset_mA());
     }
     else if (strcmp(cmd, "raw") == 0)
     {
