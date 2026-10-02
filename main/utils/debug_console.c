@@ -27,6 +27,8 @@ static const char *TAG = "DEBUG";
 //   raw <duty> <n>   hold duty, dump n single shunt register reads (10 uV units)
 //   dyn on|off|up|down  drive the dynamic load screen (logs DYN,... lines)
 //   zero             re-measure the INA219 fixed offset (panel disconnected)
+//   kcal <mA>        calibrate the INA219 per-volt error; <mA> = idle current a
+//                    multimeter in series reads with a supply on the input
 static void ina_update_config(uint16_t mask, uint16_t bits)
 {
     if (g_app.measurement_running || g_app.dynamic_load_active)
@@ -154,6 +156,14 @@ static void handle_line(char *line)
     {
         if (measurement_capture_zero())
             ESP_LOGI(TAG, "zero offset = %.2f mA", (double)measurement_ina_offset_mA());
+    }
+    else if (strcmp(cmd, "kcal") == 0)
+    {
+        char *a = strtok(NULL, " \t\r\n");
+        if (!a)
+            ESP_LOGW(TAG, "usage: kcal <idle mA read by the multimeter>");
+        else
+            measurement_calibrate_k(strtof(a, NULL));
     }
     else if (strcmp(cmd, "raw") == 0)
     {

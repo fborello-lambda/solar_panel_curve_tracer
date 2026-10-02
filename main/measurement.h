@@ -70,6 +70,15 @@ float measurement_ina_offset_mA(void);
  */
 bool measurement_capture_zero(void);
 
+/**
+ * @brief One-time bench calibration of the INA219 voltage-proportional error:
+ * with a stiff source of a few volts on the input and the load idle, pass the
+ * current a multimeter in series reads (the load's real idle current). Stored
+ * in NVS; from then on sweeps report that idle current instead of zeroing it.
+ */
+bool measurement_calibrate_k(float real_idle_mA);
+float measurement_ina_k_mA_per_V(void);
+
 void measurement_set_producer_mode(curve_producer_mode_t mode);
 curve_producer_mode_t measurement_get_producer_mode(void);
 const char *measurement_get_producer_mode_label(void);

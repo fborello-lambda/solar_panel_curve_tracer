@@ -48,6 +48,10 @@ static bool measurement_start_locked(measurement_refuse_reason_t *out_reason);
 static bool measurement_stop_locked(void);
 
 static float s_ina_offset_mA = 0.0f; // INA219 fixed zero offset, see ina_offset_capture()
+// INA219 voltage-proportional error, calibrated once on the bench (`kcal`).
+// 0 = not calibrated: fall back to measuring it at duty 0 every sweep, which
+// also hides the load's real idle current (see measurement_calibrate_k).
+static float s_ina_k_mA_per_V = 0.0f;
 static void ina_offset_load(void);
 static void ina_offset_capture(float raw_mA);
 static void dummy_producer_task(void *arg);
@@ -391,6 +395,7 @@ static bool sample_window(bool stoppable, float *out_bus_mV, float *out_shunt_uV
 
 #define INA_OFFSET_NVS_NS "meas"
 #define INA_OFFSET_NVS_KEY "ina_off_ua"
+#define INA_K_NVS_KEY "ina_k_uapv"
 
 static void ina_offset_load(void)
 {
@@ -400,8 +405,12 @@ static void ina_offset_load(void)
     int32_t ua = 0;
     if (nvs_get_i32(h, INA_OFFSET_NVS_KEY, &ua) == ESP_OK)
         s_ina_offset_mA = (float)ua / 1000.0f;
+    int32_t k_ua_per_v = 0;
+    if (nvs_get_i32(h, INA_K_NVS_KEY, &k_ua_per_v) == ESP_OK)
+        s_ina_k_mA_per_V = (float)k_ua_per_v / 1000.0f;
     nvs_close(h);
-    ESP_LOGI(TAG, "INA219 zero offset %.2f mA (from NVS)", (double)s_ina_offset_mA);
+    ESP_LOGI(TAG, "INA219 zero offset %.2f mA, k %.3f mA/V (from NVS)", (double)s_ina_offset_mA,
+             (double)s_ina_k_mA_per_V);
 }
 
 // `raw_mA` must be a reading taken at duty 0 with the input below
@@ -441,6 +450,37 @@ bool measurement_capture_zero(void)
     }
     ina_offset_capture(raw_mA);
     return true;
+}
+
+bool measurement_calibrate_k(float real_idle_mA)
+{
+    float bus_mV = 0.0f, raw_mA = 0.0f;
+    if (g_app.measurement_running || g_app.dynamic_load_active || !g_app.pwm_ready)
+        return false;
+    pwm_controller_set_duty_in_res_steps(0);
+    vTaskDelay(pdMS_TO_TICKS(SWEEP_FIRST_POINT_SETTLE_MS));
+    if (!measurement_sample(&bus_mV, &raw_mA) || bus_mV < 2000.0f)
+    {
+        ESP_LOGW(TAG, "kcal: need a source of a few volts on the input (got %.0f mV)", (double)bus_mV);
+        return false;
+    }
+    float k = (raw_mA - s_ina_offset_mA - real_idle_mA) / (bus_mV / 1000.0f);
+    s_ina_k_mA_per_V = k;
+    ESP_LOGI(TAG, "kcal: raw %.2f mA at %.3f V, offset %.2f, real idle %.2f -> k %.3f mA/V", (double)raw_mA,
+             (double)(bus_mV / 1000.0f), (double)s_ina_offset_mA, (double)real_idle_mA, (double)k);
+    nvs_handle_t h;
+    if (nvs_open(INA_OFFSET_NVS_NS, NVS_READWRITE, &h) == ESP_OK)
+    {
+        nvs_set_i32(h, INA_K_NVS_KEY, (int32_t)(k * 1000.0f));
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    return true;
+}
+
+float measurement_ina_k_mA_per_V(void)
+{
+    return s_ina_k_mA_per_V;
 }
 
 bool measurement_sample(float *out_bus_mV, float *out_raw_mA)
@@ -531,7 +571,12 @@ static bool auto_range(uint32_t pwm_res, uint32_t *out_top, uint32_t *out_knee, 
     // refreshed here: a panel connected backwards also reads ~0 V, but its
     // current flows through the MOSFET body diode, so "0 V" does not prove
     // that nothing flows (see measurement_capture_zero / boot capture).
-    float err_mA_per_V = (voc_v >= 0.5f) ? (zero_i_mA / voc_v) : 0.0f;
+    // With a bench-calibrated k the duty-0 reading is used as is: whatever
+    // is left after removing offset + k*V is the load's real idle current
+    // (op-amp offset keeping the MOSFET slightly on) and is reported.
+    float err_mA_per_V = (s_ina_k_mA_per_V > 0.0f) ? s_ina_k_mA_per_V
+                         : (voc_v >= 0.5f)        ? (zero_i_mA / voc_v)
+                                                  : 0.0f;
     *out_err_mA_per_V = err_mA_per_V;
     g_app.ina_err_mA_per_V = err_mA_per_V;
     ESP_LOGI(TAG, "auto_range: zero-load reading %.2f mA at %.3f V -> current error %.3f mA/V",

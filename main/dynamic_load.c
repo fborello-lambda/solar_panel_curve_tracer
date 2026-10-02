@@ -94,7 +94,9 @@ void dynamic_load_update_measured(void)
         // Only once the load has been at 0 long enough for the RC filter to
         // drain, otherwise a still-flowing current is mistaken for error.
         float zero_mA = raw_mA - measurement_ina_offset_mA();
-        if (g_app.dynamic_duty_steps == 0 && avg_bus_mV >= 500.0f &&
+        if (measurement_ina_k_mA_per_V() > 0.0f)
+            g_app.ina_err_mA_per_V = measurement_ina_k_mA_per_V();
+        else if (g_app.dynamic_duty_steps == 0 && avg_bus_mV >= 500.0f &&
             (now - g_app.dynamic_last_adjust_tick) >= pdMS_TO_TICKS(DYNAMIC_LOAD_ZERO_CAL_SETTLE_MS))
             g_app.ina_err_mA_per_V = zero_mA / (avg_bus_mV / 1000.0f);
         float i_mA = zero_mA - g_app.ina_err_mA_per_V * (avg_bus_mV / 1000.0f);
