@@ -23,10 +23,11 @@ encoder gives a local menu.
 ## Quick start
 
 1. Power on the device with the panel unplugged (it calibrates the current sensor zero), then connect the panel.
-2. Join the Wi-Fi network `ESP32_PLOT` (no password).
+2. On the phone, turn off mobile data (otherwise it may ignore a Wi-Fi with no internet) and join
+   `ESP32_PLOT` (no password).
 3. Open `http://192.168.4.1` and press **Start**.
 
-Printable one-page A4 quick guides: [docs/guia_rapida.pdf](docs/guia_rapida.pdf) (Spanish) and
+Printable quick guides (one A4 sheet, double-sided): [docs/guia_rapida.pdf](docs/guia_rapida.pdf) (Spanish) and
 [docs/quick_guide.pdf](docs/quick_guide.pdf) (English), built from their `.md` sources with
 `docs/build_guide.sh`. The same content is served on the device itself at
 `http://192.168.4.1/guide`; the OLED menu **NETWORK > SHOW REPO QR** links to this repository.
@@ -37,7 +38,7 @@ The whole app, including the web UI, is one file. To update:
 
 1. While online, download `app-standard.bin` from the
    [latest release](https://github.com/fborello-lambda/solar_panel_curve_tracer/releases/latest).
-2. Join the `ESP32_PLOT` Wi-Fi network.
+2. Turn off mobile data and join the `ESP32_PLOT` Wi-Fi network.
 3. Open `http://192.168.4.1/ota`, or scan the QR at OLED **SYSTEM > OTA**.
 4. Pick the file, upload, and wait about 30 seconds for the reboot, then reconnect.
 

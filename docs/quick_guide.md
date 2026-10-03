@@ -1,113 +1,114 @@
 ---
-geometry: a4paper, margin=1cm
-fontsize: 11pt
+geometry: a4paper, margin=1.6cm
+fontsize: 12pt
 mainfont: DejaVu Sans
 header-includes: |
   \usepackage{graphicx}
-  \usepackage{multicol}
   \usepackage{titlesec}
   \usepackage{enumitem}
-  \titleformat{\section}{\large\bfseries}{}{0pt}{}
-  \titleformat{\subsection}{\normalsize\bfseries}{}{0pt}{}
-  \titlespacing*{\section}{0pt}{0pt}{2pt}
-  \titlespacing*{\subsection}{0pt}{4pt}{1pt}
-  \setlist{itemsep=0pt,parsep=0pt,topsep=1pt,partopsep=0pt,leftmargin=12pt}
-  \setlength{\parskip}{1.5pt}
+  \usepackage{ragged2e}
+  \AtBeginDocument{\RaggedRight}
+  \titleformat{\section}{\Large\bfseries}{}{0pt}{}
+  \titleformat{\subsection}{\large\bfseries}{}{0pt}{}
+  \titlespacing*{\subsection}{0pt}{14pt}{5pt}
+  \setlist{itemsep=3pt,topsep=3pt,leftmargin=18pt}
+  \setlength{\parskip}{5pt}
   \setlength{\parindent}{0pt}
-  \setlength{\columnsep}{14pt}
-  \renewcommand{\arraystretch}{0.9}
+  \linespread{1.1}
   \pagenumbering{gobble}
-  \newcommand{\bmc}{\begin{multicols}{2}}
-  \newcommand{\emc}{\end{multicols}}
 ---
 
-\noindent\begin{minipage}[c]{0.86\textwidth}
-{\Large\bfseries I-V curve tracer: quick guide}\\[4pt]
-Measures the current-voltage (I-V) curve of a solar panel and computes Voc, Isc and the maximum power point (MPP). Works without internet: use the OLED screen and the knob, or a phone over Wi-Fi.
+\noindent\begin{minipage}[c]{0.80\textwidth}
+{\LARGE\bfseries I-V curve tracer}\\[4pt]
+{\large Quick guide}\\[8pt]
+Measures the current-voltage (I-V) curve of a solar panel and computes Voc, Isc and the maximum
+power point (MPP). Use it with the knob and the screen, or from a phone over Wi-Fi.
 \end{minipage}\hfill
-\begin{minipage}[c]{0.11\textwidth}\centering
+\begin{minipage}[c]{0.16\textwidth}\centering
 \includegraphics[width=\linewidth]{docs/img/guide_qr.png}\\
-{\scriptsize Online guide}
+{\small Online guide}
 \end{minipage}
-
-\bmc
 
 ## 1. Power on and connect
 
-1. Power on **with the panel unplugged**: at boot the current sensor zero is calibrated.
+1. Power on **with the panel unplugged**. At boot it calibrates the current sensor.
 2. Connect the panel: positive to **PV+**, negative to **PV-**.
-3. **Green** LED = measuring. **Red** LED = fault (no panel, reversed panel or load not
-   responding); it clears when a new measurement starts.
+3. **Green** LED: measuring. **Red** LED: a fault (see "Troubleshooting").
 
-## 2. Knob and menus (OLED screen)
+## 2. Measuring from a phone
 
-- **Turn**: move the selection (stops at the first and last item).
-- **Press**: select. **Hold** (0.7 s): go back (in the chart).
-- The screen turns off after 60 s idle; the first touch only wakes it.
+1. **Turn off mobile data** on the phone. Otherwise the phone may ignore the device's network
+   because it has no internet.
+2. Join the Wi-Fi network **ESP32_PLOT** (no password).
+3. Open `http://192.168.4.1` in the browser.
+4. Press **Start measurement**. The curve shows up in 10 to 20 seconds.
+5. Voc, Isc, Pmax, Vmp and Imp are shown below it. **Download CSV** saves the data.
 
-**NETWORK**: Wi-Fi QR, web address QR and GitHub repository QR (online guide).
+## 3. The knob
 
-**MEASURE**:
+- **Turn**: moves the selection.
+- **Press**: selects.
+- **Hold**: goes back (in the chart and the manual load).
+- The screen turns off after 60 s. The first touch only turns it back on.
 
-- **CURVE TRACER**: *START/STOP TRACE* starts or stops a sweep. *MODE*: **REAL** measures the
-  panel; **DEMO** shows an example curve without using the panel.
-- **CURVE CHART**: the last curve on screen. Turning walks the points (V and I shown below);
-  **double press** overlays the power curve (mW below); hold to go back.
-- **DYNAMIC LOAD**: manual load. Turning raises or lowers the load in 10 steps, from 0 to the
-  last sweep's Isc (no sweep yet: up to the maximum); shows I, power and voltage. **Double press**: re-measure the range with
-  whatever is connected (other light, another panel or a supply). Hold to go back. Max. 3 W.
+## 4. Menus
 
-**SYSTEM**: update QR (OTA), reset and deep sleep (wakes with the knob).
+**MEASURE**
 
-## 3. Measuring from a phone
+- **CURVE TRACER**: *START TRACE* starts a sweep and *STOP TRACE* stops it. In *MODE*, **REAL**
+  measures the panel and **DEMO** shows an example curve.
+- **CURVE CHART**: shows the last curve. Turning walks the points. A double press adds the
+  power curve.
+- **DYNAMIC LOAD** (manual load): turning raises or lowers the load in 10 steps, up to the last
+  sweep's Isc. A double press re-measures the range (other light or another panel). Max. 3 W.
 
-1. Join the Wi-Fi **ESP32_PLOT** (no password).
-2. Open `http://192.168.4.1` and press **Start** (or **Stop**).
-3. Shows the curve, Voc, Isc, Pmax, Vmp and Imp; **CSV** downloads the data; **Guide** opens the
-   full guide. ES/EN switch and light/dark theme.
+**NETWORK**: QR codes for the Wi-Fi network, the web page and this online guide.
 
-\columnbreak
+**SYSTEM**: **OTA** (update), **RESET** and **DEEP SLEEP** (screen off, saves battery; wakes
+with the knob). **BACK** goes back.
 
-## 4. What a sweep does (10 to 20 s)
+\newpage
 
-1. Measures the open-circuit voltage.
-2. Finds the current range by itself (nothing to configure).
-3. Takes up to **40 points** along the whole curve and stops at Isc.
+## 5. What a sweep does
 
-## 5. Range and precision
+1. Measures the panel's voltage with no load (Voc).
+2. Finds the current range by itself. Nothing to configure.
+3. Takes up to **40 points** along the curve and stops at Isc.
 
-- Built for a **wide range**: up to about **26 V**, **780 mA** and **10 W** in the load during a sweep.
-- **More current, better measurement.** With 40 to 70 mA or more (good light) the curve is
-  smooth and accurate.
-- **Small currents** (below about 20 mA): fewer points and a **1 to 2 mA** error.
-- The load never turns fully off: it draws about **4 mA** even at rest. So the first point reads
-  about 4 mA, and a dim panel's "no load" voltage reads lower than a multimeter on the bare
-  panel. That is what is really being measured.
+## 6. Range and precision
 
-## 6. Tips
+- The device was designed for a **wide range**: up to about **26 V**, **780 mA** and **10 W**.
+- **The more current, the better the measurement.** With 40 mA or more (good light) the curve
+  is accurate.
+- **With little current** (below about 20 mA) there are fewer points and a **1 to 2 mA** error.
+- The load always draws about **4 mA**, even at rest. So the first point reads about 4 mA. In
+  dim light, the no-load voltage can read lower than a multimeter's.
 
-- Even, steady light; do not move or cover the panel during the sweep.
+## 7. Tips
+
+- Use even, steady light. Do not move or cover the panel while measuring.
 - To lower the current, shade the **whole** panel evenly (paper or cloth), never just a few
   cells.
-- Lamp flicker is averaged out automatically.
+- Lamp flicker does not matter: it is averaged out.
 
-## 7. Troubleshooting
+## 8. Troubleshooting
 
-- **"No panel detected", red LED**: panel unplugged or **too little light** (below 0.5 V).
+- **"No panel detected" and red LED**: the panel is unplugged or has **too little light**.
   Light it better.
-- **"Panel reversed", red LED**: swap PV+ and PV-.
-- **Curve does not reach 0 V**: the panel exceeds the 780 mA cap.
-- **Sweep stops early**: hit the 10 W limit.
-- **Imprecise measurement**: current too small; more light.
-- **Web page is empty**: join the ESP32_PLOT network again.
+- **"Panel reversed" and red LED**: swap the PV+ and PV- leads.
+- **The page does not load**: turn off mobile data and join ESP32_PLOT again.
+- **The curve does not reach 0 V**: the panel gives more than 780 mA, the device's maximum.
+- **The sweep stops early**: it hit the 10 W limit.
+- **The measurement is imprecise**: the current is very small. Use more light.
 
-## 8. Safety and updates
+## 9. Safety
 
-- The load MOSFET heats up during a sweep: this is normal.
-- No power switch: unplug the battery to turn it off.
-- **Update**: download `app-standard.bin` from the latest GitHub release, join ESP32_PLOT, open
-  `http://192.168.4.1/ota` (or the QR in **SYSTEM > OTA**) and upload it. It is a single file;
-  it reboots on its own in about 30 s.
+- The load transistor (MOSFET) heats up during a sweep. This is normal.
+- There is no power switch. To turn it off, unplug the battery.
 
+## 10. Updating the firmware
 
-\emc
+1. While online, download `app-standard.bin` from the latest GitHub release.
+2. Turn off mobile data and join **ESP32_PLOT**.
+3. Open `http://192.168.4.1/ota` (or the QR in **SYSTEM > OTA**) and upload the file.
+4. The device reboots on its own in about 30 seconds.
