@@ -1,121 +1,117 @@
 ---
-geometry: a4paper, margin=0.9cm
-fontsize: 11pt
+geometry: a4paper, margin=1.6cm
+fontsize: 12pt
 mainfont: DejaVu Sans
 header-includes: |
   \usepackage{graphicx}
-  \usepackage{multicol}
   \usepackage{titlesec}
   \usepackage{enumitem}
-  \titleformat{\section}{\large\bfseries}{}{0pt}{}
-  \titleformat{\subsection}{\normalsize\bfseries}{}{0pt}{}
-  \titlespacing*{\section}{0pt}{0pt}{2pt}
-  \titlespacing*{\subsection}{0pt}{4pt}{1pt}
-  \setlist{itemsep=0pt,parsep=0pt,topsep=1pt,partopsep=0pt,leftmargin=12pt}
-  \setlength{\parskip}{1.5pt}
+  \usepackage{ragged2e}
+  \AtBeginDocument{\RaggedRight}
+  \titleformat{\section}{\Large\bfseries}{}{0pt}{}
+  \titleformat{\subsection}{\large\bfseries}{}{0pt}{}
+  \titlespacing*{\subsection}{0pt}{14pt}{5pt}
+  \setlist{itemsep=3pt,topsep=3pt,leftmargin=18pt}
+  \setlength{\parskip}{5pt}
   \setlength{\parindent}{0pt}
-  \setlength{\columnsep}{14pt}
-  \renewcommand{\arraystretch}{0.9}
+  \linespread{1.1}
   \pagenumbering{gobble}
-  \newcommand{\bmc}{\begin{multicols}{2}}
-  \newcommand{\emc}{\end{multicols}}
 ---
 
-\noindent\begin{minipage}[c]{0.86\textwidth}
-{\Large\bfseries Trazador de curvas I-V: guía rápida}\\[4pt]
-Mide la curva corriente-tensión (I-V) de un panel solar y calcula Voc, Isc y el punto de máxima potencia (MPP). Funciona sin internet: se maneja desde la pantalla OLED con la perilla o desde un teléfono por Wi-Fi.
+\noindent\begin{minipage}[c]{0.80\textwidth}
+{\LARGE\bfseries Trazador de curvas I-V}\\[4pt]
+{\large Guía rápida}\\[8pt]
+Mide la curva corriente-tensión (I-V) de un panel solar y calcula Voc, Isc y el punto de máxima
+potencia (MPP). Se usa con la perilla y la pantalla, o desde el teléfono por Wi-Fi.
 \end{minipage}\hfill
-\begin{minipage}[c]{0.11\textwidth}\centering
+\begin{minipage}[c]{0.16\textwidth}\centering
 \includegraphics[width=\linewidth]{docs/img/guide_qr.png}\\
-{\scriptsize Guía en línea}
+{\small Guía en línea}
 \end{minipage}
-
-\bmc
 
 ## 1. Encender y conectar
 
-1. Encienda el equipo **con el panel desconectado**: al arrancar calibra el cero del sensor de
-   corriente.
+1. Encienda el equipo **con el panel desconectado**. Al arrancar calibra el sensor de corriente.
 2. Conecte el panel: positivo a **PV+**, negativo a **PV-**.
-3. LED **verde** = midiendo. LED **rojo** = falla (sin panel, panel invertido o carga sin
-   respuesta); se apaga al iniciar otra medición.
+3. LED **verde**: está midiendo. LED **rojo**: hubo una falla (ver "Problemas comunes").
 
-## 2. Perilla y menús (pantalla OLED)
+## 2. Medir desde el teléfono
 
-- **Girar**: mover la selección (se detiene en el primer y último ítem).
-- **Presionar**: elegir. **Mantener** (0,7 s): volver (en el gráfico).
-- La pantalla se apaga sola tras 60 s sin uso; el primer toque solo la enciende.
+1. **Desactive los datos móviles** del teléfono. Si no, el teléfono puede ignorar la red del
+   equipo porque no tiene internet.
+2. Conéctese a la red Wi-Fi **ESP32_PLOT** (sin contraseña).
+3. Abra `http://192.168.4.1` en el navegador.
+4. Presione **Iniciar medición**. En 10 a 20 segundos aparece la curva.
+5. Arriba se ven Voc, Isc, Pmax, Vmp e Imp. **Descargar CSV** guarda los datos.
 
-Menús en inglés; entre paréntesis, su significado.
+## 3. La perilla
 
-**NETWORK** (red): QR de la red Wi-Fi, QR de la dirección web y QR del repositorio en GitHub
-(guía en línea).
+- **Girar**: mueve la selección.
+- **Presionar**: elige.
+- **Mantener presionado**: vuelve atrás (en el gráfico y en la carga manual).
+- La pantalla se apaga sola después de 60 s. El primer toque solo la vuelve a encender.
 
-**MEASURE** (medir):
+## 4. Los menús
 
-- **CURVE TRACER** (trazador de curva): *START TRACE* / *STOP TRACE* (iniciar / detener)
-  un barrido. *MODE* (modo): **REAL** mide el panel; **DEMO** muestra una curva de ejemplo sin
-  usar el panel.
-- **CURVE CHART** (gráfico de la curva): la última curva en pantalla. Girar recorre los puntos
-  (abajo se ven V e I); **doble pulsación** superpone la curva de potencia (abajo, mW);
-  mantener para volver.
-- **DYNAMIC LOAD** (carga manual): girar mueve la carga en 10 pasos, de 0 a la Isc del último
-  barrido (sin barrido previo: hasta el máximo). **Doble pulsación**: mide de nuevo el rango (otra luz, otro panel, una fuente).
-  Mantener para volver. Máx. 3 W.
+Los menús están en inglés. Entre paréntesis está su significado.
 
-**SYSTEM** (sistema): **OTA** (QR de actualización), **RESET** (reiniciar) y **DEEP SLEEP**
-(bajo consumo; despierta con la perilla). **BACK** = volver.
+**MEASURE** (medir)
 
-## 3. Medir desde el teléfono
+- **CURVE TRACER** (trazar curva): *START TRACE* inicia un barrido y *STOP TRACE* lo detiene.
+  En *MODE*, **REAL** mide el panel y **DEMO** muestra una curva de ejemplo.
+- **CURVE CHART** (ver la curva): muestra la última curva. Girar recorre los puntos.
+  Doble pulsación agrega la curva de potencia.
+- **DYNAMIC LOAD** (carga manual): girar sube o baja la carga en 10 pasos, hasta la Isc del
+  último barrido. Doble pulsación vuelve a medir el rango (con otra luz u otro panel).
+  Máximo 3 W.
 
-1. Conéctese a la Wi-Fi **ESP32_PLOT** (sin contraseña).
-2. Abra `http://192.168.4.1` y presione **Iniciar medición** (o **Detener**).
-3. Se ven la curva, Voc, Isc, Pmax, Vmp e Imp; **Descargar CSV** guarda los datos; **Guía** abre
-   la guía completa.
+**NETWORK** (red): códigos QR de la red Wi-Fi, de la página web y de esta guía en línea.
 
-\columnbreak
+**SYSTEM** (sistema): **OTA** (actualizar), **RESET** (reiniciar) y **DEEP SLEEP**
+(apagar la pantalla y ahorrar batería; se despierta con la perilla). **BACK** = volver.
 
-## 4. Qué hace un barrido (10 a 20 s)
+\newpage
 
-1. Mide la tensión sin carga.
-2. Busca solo el rango de corriente (no hay que configurarlo).
-3. Toma hasta **40 puntos** repartidos a lo largo de toda la curva y se detiene al llegar a Isc.
+## 5. Qué hace un barrido
 
+1. Mide la tensión del panel sin carga (Voc).
+2. Busca solo el rango de corriente. No hay que configurar nada.
+3. Toma hasta **40 puntos** a lo largo de la curva y termina al llegar a Isc.
 
-## 5. Rango y precisión
+## 6. Rango y precisión
 
-- Diseñado para un **rango amplio**: hasta unos **26 V**, **780 mA** y **10 W** en la carga durante el barrido.
-- **Más corriente, mejor medición.** Con 40 a 70 mA o más (buena luz) la curva sale fina y
+- El equipo fue diseñado para un **rango amplio**: hasta unos **26 V**, **780 mA** y **10 W**.
+- **Cuanta más corriente, mejor la medición.** Con 40 mA o más (buena luz) la curva sale
   precisa.
-- **Corrientes chicas** (menos de unos 20 mA): pocos puntos y error de **1 a 2 mA**.
-- La carga nunca se apaga del todo: toma unos **4 mA** aun en reposo. Por eso el primer punto
-  marca unos 4 mA, y en un panel con poca luz la tensión "sin carga" sale menor que la de un
-  multímetro con el panel suelto.
+- **Con poca corriente** (menos de unos 20 mA) hay menos puntos y un error de **1 a 2 mA**.
+- La carga siempre toma unos **4 mA**, aun en reposo. Por eso el primer punto marca unos 4 mA.
+  Con poca luz, la tensión sin carga puede salir menor que la que mide un multímetro.
 
-## 6. Consejos
+## 7. Consejos
 
-- Luz pareja y estable; no mueva ni tape el panel durante el barrido.
-- Para bajar la corriente, sombree **todo** el panel por igual (papel o tela), nunca solo algunas
-  celdas.
-- El parpadeo de lámparas se promedia solo.
+- Use luz pareja y estable. No mueva ni tape el panel mientras mide.
+- Para bajar la corriente, sombree **todo** el panel por igual (con papel o tela), nunca solo
+  algunas celdas.
+- El parpadeo de las lámparas no afecta: se promedia solo.
 
-## 7. Problemas comunes
+## 8. Problemas comunes
 
-- **"No se detecta panel", LED rojo**: panel desconectado o **con muy poca luz** (menos de
-  0,5 V). Ilumínelo mejor.
-- **"Panel invertido", LED rojo**: intercambie PV+ y PV-.
-- **La curva no llega a 0 V**: el panel supera el tope de 780 mA.
-- **El barrido se corta**: llegó al tope de 10 W.
-- **Medición poco precisa**: corriente muy chica; más luz.
-- **Página web vacía**: vuelva a conectarse a la red ESP32_PLOT.
+- **"No se detecta panel" y LED rojo**: el panel está desconectado o tiene **muy poca luz**.
+  Ilumínelo mejor.
+- **"Panel invertido" y LED rojo**: intercambie los cables de PV+ y PV-.
+- **La página no carga**: desactive los datos móviles y vuelva a conectarse a ESP32_PLOT.
+- **La curva no llega a 0 V**: el panel da más de 780 mA, el máximo del equipo.
+- **El barrido se corta antes**: se llegó al límite de 10 W.
+- **La medición es poco precisa**: la corriente es muy chica. Use más luz.
 
-## 8. Seguridad y actualización
+## 9. Seguridad
 
-- El MOSFET de carga se calienta durante el barrido: es normal.
-- Sin interruptor: para apagar, desconecte la batería.
-- **Actualizar**: descargue `app-standard.bin` de la última versión en GitHub, conéctese a
-  ESP32_PLOT, abra `http://192.168.4.1/ota` (o QR en **SYSTEM > OTA**) y súbalo. Es un solo
-  archivo; reinicia solo en unos 30 s.
+- El transistor de carga (MOSFET) se calienta durante el barrido. Es normal.
+- El equipo no tiene interruptor. Para apagarlo, desconecte la batería.
 
+## 10. Actualizar el programa
 
-\emc
+1. Con internet, descargue `app-standard.bin` de la última versión en GitHub.
+2. Desactive los datos móviles y conéctese a **ESP32_PLOT**.
+3. Abra `http://192.168.4.1/ota` (o el QR en **SYSTEM > OTA**) y suba el archivo.
+4. El equipo se reinicia solo en unos 30 segundos.
